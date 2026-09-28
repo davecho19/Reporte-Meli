@@ -1,0 +1,8 @@
+{
+  "name": "Reporte Meli",
+  "description": "Plataforma gerencial para carga continua de reportes Excel, dashboards interactivos, presentaciones ejecutivas y sincronización con GitHub.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

@@ -1,0 +1,71 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    color: #0f172a;
+    background-color: #0b0f19;
+  }
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Custom subtle scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.4);
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.4);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.6);
+}
+
+@media print {
+  @page {
+    size: landscape;
+    margin: 8mm;
+  }
+  html, body {
+    background-color: #070b14 !important;
+    color: #ffffff !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+  .print-page-break {
+    page-break-after: always !important;
+    break-after: page !important;
+  }
+  .print-slide-page {
+    width: 100% !important;
+    height: 98vh !important;
+    max-height: 98vh !important;
+    page-break-after: always !important;
+    break-after: page !important;
+    box-sizing: border-box !important;
+    overflow: hidden !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: space-between !important;
+    background-color: #0c1322 !important;
+    border: 1px solid #1e293b !important;
+    border-radius: 12px !important;
+    padding: 24px 32px !important;
+  }
+  .slide-container {
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+}
