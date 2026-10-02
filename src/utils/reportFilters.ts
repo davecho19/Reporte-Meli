@@ -10,13 +10,37 @@ import {
   CommercialCrossPhase 
 } from '../types';
 
+export interface SociosChannelBreakdown {
+  channel: 'UpConnect' | 'Connectors';
+  channelLabel: string;
+  count: number;             // Cantidad de socios (conteo exacto)
+  percentage: number;        // % de socios sobre el total
+  operationsCount: number;   // Cantidad de ventas/firmas realizadas
+  totalSales: number;        // Monto total facturado ($ USD)
+  averageTicket: number;     // Ticket promedio ($ USD)
+  topPlan?: string;
+  socios: SocioRecord[];
+}
+
+export interface SociosChannelSummary {
+  upconnect: SociosChannelBreakdown;
+  connectors: SociosChannelBreakdown;
+  totalSociosCount: number;
+  totalOperationsCount: number;
+  totalSales: number;
+  averageTicket: number;
+}
+
 export interface FilteredReportView {
   titleReport1: string;
   titleReport2: string;
   subtitleDate: string;
   periodLabel: string;
+  activeMonthName?: string;
+  activeMonthIndex?: number;
   transactions: TransactionRecord[];
   socios: SocioRecord[];
+  sociosSummary: SociosChannelSummary;
   totalUpSales: number;
   totalCoSales: number;
   totalSales: number;
@@ -32,18 +56,104 @@ export interface FilteredReportView {
   isFiltered: boolean;
 }
 
-const MONTH_NAMES_ES = [
+export const MONTH_NAMES_ES = [
   'ENERO', 'FEBRERO', 'MARZO', 'ABRIL', 'MAYO', 'JUNIO',
   'JULIO', 'AGOSTO', 'SEPTIEMBRE', 'OCTUBRE', 'NOVIEMBRE', 'DICIEMBRE'
 ];
+
+/**
+ * Robustly extracts the month index (1-12) and standardized month name ('SEPTIEMBRE')
+ * from any TransactionRecord using its explicit month fields, notes tag, or date string.
+ */
+export const extractTransactionMonth = (t: TransactionRecord): { monthIndex: number; monthName: string } => {
+  if (t.monthIndex && t.monthIndex >= 1 && t.monthIndex <= 12) {
+    return {
+      monthIndex: t.monthIndex,
+      monthName: t.month || MONTH_NAMES_ES[t.monthIndex - 1],
+    };
+  }
+
+  const monthLookup: Record<string, number> = {
+    enero: 1, january: 1, ene: 1, jan: 1,
+    febrero: 2, february: 2, feb: 2,
+    marzo: 3, march: 3, mar: 3,
+    abril: 4, april: 4, abr: 4, apr: 4,
+    mayo: 5, may: 5,
+    junio: 6, june: 6, jun: 6,
+    julio: 7, july: 7, jul: 7,
+    agosto: 8, august: 8, ago: 8, aug: 8,
+    septiembre: 9, setiembre: 9, september: 9, sep: 9, sept: 9, set: 9,
+    octubre: 10, october: 10, oct: 10,
+    noviembre: 11, november: 11, nov: 11,
+    diciembre: 12, december: 12, dic: 12, dec: 12,
+  };
+
+  if (t.notes) {
+    const lowerNotes = t.notes.toLowerCase();
+    for (const [name, idx] of Object.entries(monthLookup)) {
+      if (lowerNotes.includes(name)) {
+        return { monthIndex: idx, monthName: MONTH_NAMES_ES[idx - 1] };
+      }
+    }
+  }
+
+  if (t.date) {
+    const dateStr = String(t.date).trim();
+    const parts = dateStr.split(/[-/]/);
+    if (parts.length >= 2) {
+      let m = -1;
+      if (parts[0].length === 4) {
+        // Format YYYY-MM-DD
+        m = parseInt(parts[1], 10);
+      } else if (parts.length >= 3 && parts[2].length === 4) {
+        // Format DD/MM/YYYY or MM/DD/YYYY
+        const p1 = parseInt(parts[0], 10);
+        const p2 = parseInt(parts[1], 10);
+        if (p1 > 12 && p2 <= 12) m = p2;
+        else if (p2 > 12 && p1 <= 12) m = p1;
+        else m = p2; // Default Latin DD/MM/YYYY
+      } else {
+        const cand = parseInt(parts[1], 10);
+        m = !isNaN(cand) && cand >= 1 && cand <= 12 ? cand : parseInt(parts[0], 10);
+      }
+      if (!isNaN(m) && m >= 1 && m <= 12) {
+        return { monthIndex: m, monthName: MONTH_NAMES_ES[m - 1] };
+      }
+    }
+  }
+
+  return { monthIndex: 9, monthName: 'SEPTIEMBRE' };
+};
 
 export const formatSpanishDate = (dateStr: string): string => {
   if (!dateStr) return '';
   const parts = dateStr.split(/[-/]/);
   if (parts.length === 3) {
-    const y = parts[0].length === 4 ? parseInt(parts[0], 10) : parseInt(parts[2], 10);
-    const m = parts[0].length === 4 ? parseInt(parts[1], 10) : parseInt(parts[0], 10);
-    const d = parts[0].length === 4 ? parseInt(parts[2], 10) : parseInt(parts[1], 10);
+    let y = 2026, m = 9, d = 1;
+    if (parts[0].length === 4) {
+      // YYYY-MM-DD
+      y = parseInt(parts[0], 10);
+      m = parseInt(parts[1], 10);
+      d = parseInt(parts[2], 10);
+    } else {
+      // DD/MM/YYYY or MM/DD/YYYY
+      y = parseInt(parts[2], 10);
+      const p0 = parseInt(parts[0], 10);
+      const p1 = parseInt(parts[1], 10);
+      if (p0 > 12 && p1 <= 12) {
+        // Definitely DD/MM/YYYY
+        d = p0;
+        m = p1;
+      } else if (p1 > 12 && p0 <= 12) {
+        // MM/DD/YYYY
+        m = p0;
+        d = p1;
+      } else {
+        // Standard Latin DD/MM/YYYY
+        d = p0;
+        m = p1;
+      }
+    }
     const monthName = MONTH_NAMES_ES[m - 1] || 'Septiembre';
     return `${d} de ${monthName.toLowerCase()} de ${y}`;
   }
@@ -53,27 +163,9 @@ export const formatSpanishDate = (dateStr: string): string => {
 export const deriveMonthlyMetricsFromTransactions = (transactions: TransactionRecord[]): MonthlyMetric[] => {
   if (transactions.length === 0) return [];
   const map: Record<number, { upSales: number; coSales: number; upCount: number; coCount: number }> = {};
-  
+
   transactions.forEach((t) => {
-    let m = 9;
-    if (t.date) {
-      const dateStr = String(t.date).trim();
-      const parts = dateStr.split(/[-/]/);
-      if (parts.length >= 2) {
-        if (parts[0].length === 4) {
-          // Format YYYY-MM-DD
-          m = parseInt(parts[1], 10);
-        } else if (parts.length >= 3 && parts[2].length === 4) {
-          // Format DD/MM/YYYY or DD-MM-YYYY -> parts[1] is the month!
-          m = parseInt(parts[1], 10);
-        } else {
-          // Fallback to parts[1] or parts[0]
-          const cand = parseInt(parts[1], 10);
-          m = !isNaN(cand) && cand >= 1 && cand <= 12 ? cand : parseInt(parts[0], 10);
-        }
-      }
-    }
-    if (isNaN(m) || m < 1 || m > 12) m = 9;
+    const { monthIndex: m } = extractTransactionMonth(t);
 
     if (!map[m]) {
       map[m] = { upSales: 0, coSales: 0, upCount: 0, coCount: 0 };
@@ -188,11 +280,26 @@ export const deriveWeeklyBreakdownFromTransactions = (
 } => {
   if (transactions.length === 0) return { type1: [], type2: [] };
 
+  // Find the primary month among transactions
+  const monthCounts: Record<string, number> = {};
+  transactions.forEach((t) => {
+    const { monthName } = extractTransactionMonth(t);
+    monthCounts[monthName] = (monthCounts[monthName] || 0) + 1;
+  });
+  let primaryMonthLower = 'septiembre';
+  let maxCnt = -1;
+  for (const [mName, cnt] of Object.entries(monthCounts)) {
+    if (cnt > maxCnt) {
+      maxCnt = cnt;
+      primaryMonthLower = mName.toLowerCase();
+    }
+  }
+
   const weekDefs = [
-    { id: 'w1', weekName: 'Semana 1', dateRange: '01 al 06 de septiembre', startDay: 1, endDay: 6 },
-    { id: 'w2', weekName: 'Semana 2', dateRange: '07 al 13 de septiembre', startDay: 7, endDay: 13 },
-    { id: 'w3', weekName: 'Semana 3', dateRange: '14 al 20 de septiembre', startDay: 14, endDay: 20 },
-    { id: 'w4', weekName: 'Semana 4', dateRange: '21 al 30 de septiembre', startDay: 21, endDay: 31 },
+    { id: 'w1', weekName: 'Semana 1', dateRange: `01 al 06 de ${primaryMonthLower}`, startDay: 1, endDay: 6 },
+    { id: 'w2', weekName: 'Semana 2', dateRange: `07 al 13 de ${primaryMonthLower}`, startDay: 7, endDay: 13 },
+    { id: 'w3', weekName: 'Semana 3', dateRange: `14 al 20 de ${primaryMonthLower}`, startDay: 14, endDay: 20 },
+    { id: 'w4', weekName: 'Semana 4', dateRange: `21 al 31 de ${primaryMonthLower}`, startDay: 21, endDay: 31 },
   ];
 
   const totalMonthSales = transactions.reduce((acc, t) => acc + (t.value || 0), 0) || 1;
@@ -261,12 +368,20 @@ export const deriveWeeklyBreakdownFromTransactions = (
   return { type1, type2 };
 };
 
-export const formatSpanishDateCutoff = (d: Date): string => {
+export const formatSpanishDateCutoff = (d: Date | string): string => {
+  if (!d) return '20 de septiembre de 2026';
+  if (typeof d === 'string') {
+    return formatSpanishDate(d);
+  }
   const months = [
     'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
     'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'
   ];
-  return `${d.getDate()} de ${months[d.getMonth()]} de ${d.getFullYear()}`;
+  // Use UTC to prevent subtracting 1 day in western hemisphere timezones like Ecuador (UTC-5)
+  const day = d.getUTCDate();
+  const month = months[d.getUTCMonth()] || 'septiembre';
+  const year = d.getUTCFullYear() || 2026;
+  return `${day} de ${month} de ${year}`;
 };
 
 export const deriveSolutionCategoriesFromTransactions = (transactions: TransactionRecord[]): SolutionCategory[] => {
@@ -323,6 +438,97 @@ export const deriveCommercialCrossFromTransactions = (transactions: TransactionR
 };
 
 /**
+ * Computes exact channel breakdown and partner counts (UpConnect vs Connectors):
+ * - count of partners (cantidad de socios)
+ * - operations/sales count
+ * - total revenue in USD
+ * - average ticket
+ */
+export const computeSociosChannelSummary = (
+  socios: SocioRecord[],
+  transactions: TransactionRecord[] = []
+): SociosChannelSummary => {
+  const upSocios: SocioRecord[] = [];
+  const coSocios: SocioRecord[] = [];
+
+  let upSales = 0;
+  let coSales = 0;
+  let upOps = 0;
+  let coOps = 0;
+
+  socios.forEach((s) => {
+    let ch = s.channel;
+    if (!ch) {
+      const sName = (s.name || '').toLowerCase().trim();
+      const sTrx = transactions.filter((t) => (t.socio || '').toLowerCase().trim() === sName);
+      if (sTrx.length > 0) {
+        let uCnt = 0;
+        let cCnt = 0;
+        sTrx.forEach((t) => {
+          if (t.channel === 'Connectors') cCnt++;
+          else uCnt++;
+        });
+        ch = cCnt > uCnt ? 'Connectors' : 'UpConnect';
+      } else {
+        const role = (s.role || '').toLowerCase();
+        if (role.includes('up') || role.includes('direct') || sName.includes('upconnect')) {
+          ch = 'UpConnect';
+        } else {
+          ch = 'Connectors';
+        }
+      }
+    }
+
+    // Mutate/ensure channel is present on record
+    s.channel = ch;
+
+    if (ch === 'UpConnect') {
+      upSocios.push(s);
+      upSales += s.totalSales || 0;
+      upOps += s.operationsCount || 1;
+    } else {
+      coSocios.push(s);
+      coSales += s.totalSales || 0;
+      coOps += s.operationsCount || 1;
+    }
+  });
+
+  const totalSocios = upSocios.length + coSocios.length;
+  const totalSales = parseFloat((upSales + coSales).toFixed(2));
+  const totalOps = upOps + coOps;
+
+  const upPct = totalSocios > 0 ? parseFloat(((upSocios.length / totalSocios) * 100).toFixed(1)) : 0;
+  const coPct = totalSocios > 0 ? parseFloat(((coSocios.length / totalSocios) * 100).toFixed(1)) : 0;
+
+  return {
+    upconnect: {
+      channel: 'UpConnect',
+      channelLabel: 'UpConnect Directo',
+      count: upSocios.length,
+      percentage: upPct,
+      operationsCount: upOps,
+      totalSales: parseFloat(upSales.toFixed(2)),
+      averageTicket: upOps > 0 ? parseFloat((upSales / upOps).toFixed(2)) : 0,
+      socios: upSocios,
+    },
+    connectors: {
+      channel: 'Connectors',
+      channelLabel: 'Connectors (Red Distribuidores)',
+      count: coSocios.length,
+      percentage: coPct,
+      operationsCount: coOps,
+      totalSales: parseFloat(coSales.toFixed(2)),
+      averageTicket: coOps > 0 ? parseFloat((coSales / coOps).toFixed(2)) : 0,
+      socios: coSocios,
+    },
+    totalSociosCount: totalSocios,
+    totalOperationsCount: totalOps,
+    totalSales,
+    averageTicket: totalOps > 0 ? parseFloat((totalSales / totalOps).toFixed(2)) : 0,
+  };
+};
+
+/**
  * Computes filtered stats and dynamic executive titles based on filter selection:
  * - month: "Reporte del mes de Septiembre 2026"
  * - week: "hasta el 20 de septiembre semana 2 (del 07 al 13 de septiembre)"
@@ -340,21 +546,26 @@ export const computeReportView = (dataset: GlobalDataset): FilteredReportView =>
   let filteredTrx = [...dataset.transactions];
   let filteredSocios = [...dataset.socios];
 
+  let activeMonthName: string | undefined = undefined;
+  let activeMonthIndex: number | undefined = undefined;
+
   if (filter.type === 'month' && filter.month) {
     isFiltered = true;
     const monthName = filter.month.toUpperCase();
+    activeMonthName = monthName;
+    activeMonthIndex = MONTH_NAMES_ES.indexOf(monthName) + 1;
+
     titleReport1 = `Reporte del mes de ${monthName.charAt(0) + monthName.slice(1).toLowerCase()} 2026: Upconnect / Connectors`;
     titleReport2 = `REPORTE GERENCIAL VENTAS DEL MES DE ${monthName} 2026`;
     subtitleDate = `Mes completo de ${monthName.charAt(0) + monthName.slice(1).toLowerCase()} 2026`;
     periodLabel = `Mes de ${monthName.charAt(0) + monthName.slice(1).toLowerCase()}`;
 
-    // Filter transactions by month index
+    // Filter transactions by month index using exact extractTransactionMonth
     const mIndex = MONTH_NAMES_ES.indexOf(monthName) + 1;
     if (mIndex > 0) {
       filteredTrx = dataset.transactions.filter((t) => {
-        const parts = t.date.split(/[-/]/);
-        const m = parts[0].length === 4 ? parseInt(parts[1], 10) : parseInt(parts[0], 10);
-        return m === mIndex;
+        const { monthIndex } = extractTransactionMonth(t);
+        return monthIndex === mIndex;
       });
     }
   } else if (filter.type === 'week' && filter.weekId) {
@@ -412,22 +623,46 @@ export const computeReportView = (dataset: GlobalDataset): FilteredReportView =>
     });
 
     // Recompute socios ranking based on filtered transactions if available
-    const socioMap: Record<string, { total: number; count: number; role?: string; plans: Record<string, number> }> = {};
+    const socioMap: Record<string, {
+      total: number;
+      count: number;
+      role?: string;
+      channel?: 'UpConnect' | 'Connectors';
+      upOps: number;
+      coOps: number;
+      plans: Record<string, number>;
+    }> = {};
+
     filteredTrx.forEach((t) => {
-      const sName = t.socio || (t.channel === 'Connectors' ? 'Distribuidor Connect' : 'UpConnect Directo');
+      const sName = (t.socio || (t.channel === 'Connectors' ? 'Distribuidor Connect' : 'UpConnect Directo')).trim();
       if (!socioMap[sName]) {
-        socioMap[sName] = { total: 0, count: 0, role: t.role || 'Distribuidor Connect', plans: {} };
+        socioMap[sName] = { 
+          total: 0, 
+          count: 0, 
+          role: t.role || (t.channel === 'Connectors' ? 'Distribuidor Connect' : 'UpConnect Directo'),
+          channel: t.channel,
+          upOps: 0,
+          coOps: 0,
+          plans: {} 
+        };
       }
-      socioMap[sName].total += t.value;
+      socioMap[sName].total = parseFloat((socioMap[sName].total + t.value).toFixed(2));
       socioMap[sName].count += 1;
-      if (t.role && t.role !== 'Distribuidor Connect') socioMap[sName].role = t.role;
-      const planName = t.solutionCategory ? `${t.solutionCategory} (${t.duration})` : (t.duration || 'Plan Estándar');
+      if (t.channel === 'Connectors') socioMap[sName].coOps += 1;
+      else socioMap[sName].upOps += 1;
+
+      if (t.role && t.role !== 'Distribuidor Connect' && t.role !== 'UpConnect Directo') {
+        socioMap[sName].role = t.role;
+      }
+      const planName = t.solutionCategory
+        ? (t.solutionCategory.includes('(') ? t.solutionCategory : (t.duration && t.duration !== 'Un año' ? `${t.solutionCategory} (${t.duration})` : t.solutionCategory))
+        : (t.duration || 'UP INTERMEDIO ($17.25)');
       socioMap[sName].plans[planName] = (socioMap[sName].plans[planName] || 0) + 1;
     });
 
     const ranked: SocioRecord[] = Object.entries(socioMap)
       .map(([name, data]) => {
-        let topPlan = 'Firma Electrónica (1 año)';
+        let topPlan = 'UP INTERMEDIO ($17.25)';
         let maxCount = -1;
         for (const [pName, count] of Object.entries(data.plans)) {
           if (count > maxCount) {
@@ -436,6 +671,13 @@ export const computeReportView = (dataset: GlobalDataset): FilteredReportView =>
           }
         }
         const averageTicket = data.count > 0 ? (data.total / data.count) : 0;
+        const channel: 'UpConnect' | 'Connectors' = data.coOps > data.upOps 
+          ? 'Connectors' 
+          : data.upOps > data.coOps 
+          ? 'UpConnect' 
+          : (data.channel || 'Connectors');
+        const role = data.role || (channel === 'Connectors' ? 'Distribuidor Connect' : 'UpConnect Directo');
+
         return {
           rank: 0,
           name,
@@ -444,7 +686,8 @@ export const computeReportView = (dataset: GlobalDataset): FilteredReportView =>
           operationsCount: data.count,
           averageTicket: parseFloat(averageTicket.toFixed(2)),
           topPlan,
-          role: data.role || 'Distribuidor Connect',
+          role,
+          channel,
           note: undefined,
         };
       })
@@ -456,15 +699,32 @@ export const computeReportView = (dataset: GlobalDataset): FilteredReportView =>
       if (idx === 0) s.note = 'Líder en Periodo';
     });
 
-    if (ranked.length > 0 && (filteredSocios.length === 0 || isFiltered)) {
+    if (ranked.length > 0) {
       filteredSocios = ranked;
     }
   } else {
-    // Standard totals from monthly metrics
-    totalUpSales = dataset.monthlyMetrics.reduce((a, m) => a + m.upconnectSales, 0);
-    totalCoSales = dataset.monthlyMetrics.reduce((a, m) => a + m.connectorsSales, 0);
-    totalUpCount = dataset.monthlyMetrics.reduce((a, m) => a + m.upconnectCount, 0);
-    totalCoCount = dataset.monthlyMetrics.reduce((a, m) => a + m.connectorsCount, 0);
+    // When filtered by month but no individual transaction rows match, check target monthly metric
+    if (filter.type === 'month' && filter.month) {
+      const targetMetric = dataset.monthlyMetrics.find(
+        (m) => m.month.toUpperCase() === filter.month!.toUpperCase()
+      );
+      if (targetMetric) {
+        totalUpSales = targetMetric.upconnectSales;
+        totalCoSales = targetMetric.connectorsSales;
+        totalUpCount = targetMetric.upconnectCount;
+        totalCoCount = targetMetric.connectorsCount;
+      }
+      // If dataset has transactions, but none matched this month, don't show full un-filtered socios
+      if (dataset.transactions.length > 0) {
+        filteredSocios = [];
+      }
+    } else {
+      // Standard totals from monthly metrics
+      totalUpSales = dataset.monthlyMetrics.reduce((a, m) => a + m.upconnectSales, 0);
+      totalCoSales = dataset.monthlyMetrics.reduce((a, m) => a + m.connectorsSales, 0);
+      totalUpCount = dataset.monthlyMetrics.reduce((a, m) => a + m.upconnectCount, 0);
+      totalCoCount = dataset.monthlyMetrics.reduce((a, m) => a + m.connectorsCount, 0);
+    }
   }
 
   let totalSales = totalUpSales + totalCoSales;
@@ -484,7 +744,8 @@ export const computeReportView = (dataset: GlobalDataset): FilteredReportView =>
     let coC = 0;
 
     filteredSocios.forEach((s) => {
-      const isCo = (s.role || '').toLowerCase().includes('connect') || (s.role || '').toLowerCase().includes('distribuidor');
+      const isCo = s.channel === 'Connectors' || (s.role || '').toLowerCase().includes('connect') || (s.role || '').toLowerCase().includes('distribuidor');
+      s.channel = isCo ? 'Connectors' : 'UpConnect';
       if (isCo) {
         coS += s.totalSales || 0;
         coC += s.operationsCount || 1;
@@ -512,13 +773,19 @@ export const computeReportView = (dataset: GlobalDataset): FilteredReportView =>
     ? dataset.monthlyMetrics
     : deriveMonthlyMetricsFromTransactions(dataset.transactions);
 
+  // Derive exact partners count breakdown (UpConnect vs Connectors)
+  const sociosSummary = computeSociosChannelSummary(filteredSocios, filteredTrx);
+
   return {
     titleReport1,
     titleReport2,
     subtitleDate,
     periodLabel,
+    activeMonthName,
+    activeMonthIndex,
     transactions: filteredTrx,
     socios: filteredSocios,
+    sociosSummary,
     totalUpSales,
     totalCoSales,
     totalSales,

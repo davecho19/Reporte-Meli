@@ -33,6 +33,9 @@ interface Props {
     transactions?: TransactionRecord[];
     monthlyMetrics?: MonthlyMetric[];
     socios?: SocioRecord[];
+    detectedMonth?: string;
+    detectedCutoffDate?: string;
+    dateRangeStr?: string;
     mode: 'append' | 'replace';
   }) => void;
 }
@@ -54,9 +57,15 @@ export const ExcelUploadModal: React.FC<Props> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    setActiveType(initialTargetType || 'firma');
+    const nextType = initialTargetType || 'firma';
+    setActiveType(nextType);
     setParsedResult(null);
     setErrorMessage(null);
+    // User requested: "para que lo tomes como referencia para que se sume al reporte 2"
+    // Default to 'append' for socios so it automatically sums into Reporte 2
+    if (nextType === 'socios') {
+      setImportMode('append');
+    }
   }, [initialTargetType, isOpen]);
 
   if (!isOpen) return null;
@@ -104,6 +113,9 @@ export const ExcelUploadModal: React.FC<Props> = ({
         type: 'socios',
         socios: parsedResult.socios,
         transactions: parsedResult.transactions,
+        detectedMonth: parsedResult.detectedMonth,
+        detectedCutoffDate: parsedResult.detectedCutoffDate,
+        dateRangeStr: parsedResult.dateRangeStr,
         mode: importMode,
       });
     } else if (parsedResult.recognizedType === 'monthly_summary' && parsedResult.monthlyMetrics) {
@@ -117,6 +129,9 @@ export const ExcelUploadModal: React.FC<Props> = ({
         type: 'transactions',
         transactions: parsedResult.transactions,
         socios: parsedResult.socios,
+        detectedMonth: parsedResult.detectedMonth,
+        detectedCutoffDate: parsedResult.detectedCutoffDate,
+        dateRangeStr: parsedResult.dateRangeStr,
         mode: importMode,
       });
     }
@@ -145,10 +160,12 @@ export const ExcelUploadModal: React.FC<Props> = ({
             </div>
             <div>
               <h2 className="text-base font-bold text-white">
-                {activeType === 'firma' ? 'Carga Archivo Firma (Reporte 1 · 9 Columnas)' : 'Carga Archivo Socios (Ranking & Cartera)'}
+                {activeType === 'firma' ? 'Carga Archivo Firma (Reporte 1 · 9 Columnas)' : 'Carga Archivo Socios (Reporte 2 · Formato 7 Columnas)'}
               </h2>
               <p className="text-xs text-slate-400">
-                Alimenta la base de datos y actualiza automáticamente el Reporte 1 de Firmas y el Reporte 2
+                {activeType === 'firma' 
+                  ? 'Alimenta la base de datos de firmas y actualiza automáticamente el Reporte 1'
+                  : 'Suma las ventas de los socios al Reporte 2 (SOCIO, FECHA, MES, ID CLIENTE, NOMBRE CLIENTE, TIPO DE PLAN, PRECIO)'}
               </p>
             </div>
           </div>
@@ -230,12 +247,12 @@ export const ExcelUploadModal: React.FC<Props> = ({
                   ? 'Procesando archivo...'
                   : activeType === 'firma'
                   ? 'Arrastra tu archivo Excel de Firmas / Emisiones aquí'
-                  : 'Arrastra tu archivo Excel de Socios / Franquicias aquí'}
+                  : 'Arrastra tu archivo Excel de Socios (7 Columnas) aquí'}
               </h3>
               <p className="text-xs text-slate-400 max-w-md mx-auto mb-4">
                 {activeType === 'firma'
                   ? 'Procesa el reporte de emisiones extrayendo el valor de cada firma directamente de la Columna BH (dólares ecuatorianos USD).'
-                  : 'Toma como referencia las columnas de Socios, Ventas realizadas, Monto total y Rol.'}
+                  : 'Formato oficial de 7 columnas: SOCIO, FECHA, MES, ID CLIENTE, NOMBRE CLIENTE, TIPO DE PLAN, PRECIO. Los datos se sumarán directamente al Reporte 2.'}
               </p>
 
               <div className="flex flex-wrap items-center justify-center gap-2">
@@ -261,15 +278,24 @@ export const ExcelUploadModal: React.FC<Props> = ({
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-emerald-300 border border-slate-700 shadow-sm"
                   >
                     <Download className="w-3.5 h-3.5" />
-                    <span>Descargar Plantilla Archivo Socios (.xlsx)</span>
+                    <span>Descargar Plantilla Archivo Socios (7 Columnas .xlsx)</span>
                   </button>
                 )}
               </div>
 
-              {/* Decimal compatibility badge */}
+              {/* Decimal & format compatibility badge */}
               <div className="mt-3.5 py-1.5 px-3 rounded-lg bg-slate-800/70 border border-slate-700/60 text-[11px] text-slate-300 inline-flex items-center gap-1.5 max-w-lg mx-auto">
-                <span className="text-emerald-400 font-bold">✓ Columna BH (USD):</span>
-                <span>Los montos se toman de la <strong>Columna BH</strong> en dólares ecuatorianos (soporta <code>$</code>, decimales con punto y con coma).</span>
+                {activeType === 'firma' ? (
+                  <>
+                    <span className="text-emerald-400 font-bold">✓ Columna BH (USD):</span>
+                    <span>Los montos se toman de la <strong>Columna BH</strong> en dólares ecuatorianos (soporta <code>$</code>, decimales con punto y con coma).</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-emerald-400 font-bold">✓ Integración Reporte 2:</span>
+                    <span>Suma automáticamente las ventas, ticket promedio, planes más vendidos y evolución mensual de socios.</span>
+                  </>
+                )}
               </div>
             </div>
           )}
@@ -321,6 +347,32 @@ export const ExcelUploadModal: React.FC<Props> = ({
                   </button>
                 </div>
               </div>
+
+              {/* Month & Date Reconciliation Badge */}
+              {(parsedResult.detectedMonth || parsedResult.detectedCutoffDate) && (
+                <div className="p-3.5 rounded-xl bg-[#091122] border border-emerald-500/40 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-lg">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-3 h-3 rounded-full bg-emerald-400 shadow-sm shadow-emerald-400/50 shrink-0" />
+                    <div>
+                      <div className="text-xs font-bold text-white flex items-center gap-2">
+                        <span>Mes Identificado:</span>
+                        <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-extrabold uppercase">
+                          {parsedResult.detectedMonth || 'SEPTIEMBRE'} {parsedResult.detectedYear || 2026}
+                        </span>
+                      </div>
+                      {parsedResult.dateRangeStr && (
+                        <div className="text-[11px] text-slate-400 mt-0.5">
+                          Rango de emisiones: <strong className="text-slate-200">{parsedResult.dateRangeStr}</strong>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="text-[11px] font-semibold text-sky-300 bg-sky-950/80 px-3 py-1.5 rounded-lg border border-sky-800/60 shrink-0">
+                    Corte Oficial: {parsedResult.detectedCutoffDate || '20 de septiembre de 2026'}
+                  </div>
+                </div>
+              )}
 
               {/* Action Banner to inform user to click Actualizar */}
               <div className="p-3.5 rounded-xl bg-gradient-to-r from-blue-950/60 via-slate-900/80 to-blue-950/60 border border-sky-500/40 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-lg">
@@ -476,7 +528,7 @@ export const ExcelUploadModal: React.FC<Props> = ({
                   <label
                     className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
                       importMode === 'append'
-                        ? 'border-sky-500 bg-sky-500/10'
+                        ? 'border-emerald-500 bg-emerald-500/10'
                         : 'border-slate-800 hover:border-slate-700 bg-slate-950/40'
                     }`}
                   >
@@ -488,9 +540,18 @@ export const ExcelUploadModal: React.FC<Props> = ({
                       className="mt-1"
                     />
                     <div>
-                      <div className="text-xs font-bold text-white">Carga Progresiva (Incremental)</div>
+                      <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                        <span>{activeType === 'socios' ? 'Sumar al Reporte 2 (Carga Progresiva)' : 'Carga Progresiva (Incremental)'}</span>
+                        {activeType === 'socios' && (
+                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 font-semibold border border-emerald-500/30">
+                            Recomendado
+                          </span>
+                        )}
+                      </div>
                       <div className="text-[11px] text-slate-400">
-                        Suma y acumula a la base actual para alimentar continuamente el reporte.
+                        {activeType === 'socios'
+                          ? 'Suma y acumula las ventas de los socios a la base actual para consolidar el Reporte 2.'
+                          : 'Suma y acumula a la base actual para alimentar continuamente el reporte.'}
                       </div>
                     </div>
                   </label>
@@ -512,7 +573,9 @@ export const ExcelUploadModal: React.FC<Props> = ({
                     <div>
                       <div className="text-xs font-bold text-white">Reemplazar Todo el Conjunto</div>
                       <div className="text-[11px] text-slate-400">
-                        Sobrescribe y actualiza con los datos del archivo cargado.
+                        {activeType === 'socios'
+                          ? 'Sobrescribe los socios y ventas del Reporte 2 únicamente con este archivo.'
+                          : 'Sobrescribe y actualiza con los datos del archivo cargado.'}
                       </div>
                     </div>
                   </label>

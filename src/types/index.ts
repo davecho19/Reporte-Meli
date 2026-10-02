@@ -11,6 +11,8 @@ export interface TransactionRecord {
   channel: 'UpConnect' | 'Connectors';
   socio?: string;
   solutionCategory?: 'ERP Contables y Módulos' | 'Planes de Contador' | 'Facturación Electrónica' | string;
+  month?: string;       // e.g. 'SEPTIEMBRE'
+  monthIndex?: number;  // 1-12
   notes?: string;
   createdAt: string;
   sourceFile?: string;
@@ -35,6 +37,7 @@ export interface SocioRecord {
   averageTicket?: number; // Tiket promedio ($)
   topPlan?: string;       // Plan más vendido
   role?: string;          // Rol que tiene el socio
+  channel?: 'UpConnect' | 'Connectors'; // Canal al que pertenece el socio
   note?: string;
 }
 

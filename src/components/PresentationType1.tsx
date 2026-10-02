@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { GlobalDataset } from '../types';
 import { computeReportView } from '../utils/reportFilters';
 import { exportPresentationType1ToPPTX } from '../services/pptxExportService';
+import { SociosChannelTable } from './SociosChannelTable';
 import { 
   ChevronLeft, 
   ChevronRight, 
@@ -48,7 +49,7 @@ interface TopProductItem {
 export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard }) => {
   const [currentSlide, setCurrentSlide] = useState<number>(1);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
-  const [sociosViewMode, setSociosViewMode] = useState<'table' | 'ranking'>('table');
+  const [sociosViewMode, setSociosViewMode] = useState<'table' | 'ranking' | 'channels'>('table');
   const [socioSearch, setSocioSearch] = useState<string>('');
   const [isExportingPPTX, setIsExportingPPTX] = useState<boolean>(false);
 
@@ -104,12 +105,8 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard 
   };
 
   // Communities: Auto calculation based on registered socios & manual customization
-  const autoUpSocios = activeSocios.filter(
-    (s) => !(s.role?.toLowerCase().includes('connect') || s.role?.toLowerCase().includes('distribuidor'))
-  ).length;
-  const autoCoSocios = activeSocios.filter(
-    (s) => s.role?.toLowerCase().includes('connect') || s.role?.toLowerCase().includes('distribuidor')
-  ).length;
+  const autoUpSocios = viewData.sociosSummary.upconnect.count;
+  const autoCoSocios = viewData.sociosSummary.connectors.count;
   const autoFormacion = Math.max(1, Math.round((autoUpSocios + autoCoSocios) * 0.25)) || 51;
 
   const [customCommunities, setCustomCommunities] = useState<{
@@ -122,9 +119,9 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard 
   const [tempFranquicia, setTempFranquicia] = useState<number>(0);
   const [tempFormacion, setTempFormacion] = useState<number>(0);
 
-  const upcontaMembers = customCommunities.upcontaSocios ?? (autoUpSocios > 0 ? autoUpSocios : 118);
-  const franquiciaMembers = customCommunities.franquiciaVIP ?? (autoCoSocios > 0 ? autoCoSocios : 129);
-  const formacionMembers = customCommunities.formacionComercial ?? (autoCoSocios > 0 ? autoFormacion : 51);
+  const upcontaMembers = customCommunities.upcontaSocios ?? (autoUpSocios > 0 ? autoUpSocios : (dataset.transactions.length > 0 ? 0 : 118));
+  const franquiciaMembers = customCommunities.franquiciaVIP ?? (autoCoSocios > 0 ? autoCoSocios : (dataset.transactions.length > 0 ? 0 : 129));
+  const formacionMembers = customCommunities.formacionComercial ?? (autoCoSocios > 0 ? autoFormacion : (dataset.transactions.length > 0 ? 0 : 51));
   const isManuallyModified =
     customCommunities.upcontaSocios !== undefined ||
     customCommunities.franquiciaVIP !== undefined ||
@@ -886,11 +883,11 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard 
 
       case 'communities':
         return (
-          <div className="h-full flex flex-col justify-between p-6 sm:p-10 relative bg-[#0c1322]">
+          <div className="h-full flex flex-col justify-between p-6 sm:p-8 relative bg-[#0c1322]">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
                 <span className="text-xs font-bold uppercase tracking-wider text-sky-400">
-                  RED HUMANA Y DISTRIBUCIÓN
+                  RED HUMANA Y DISTRIBUCIÓN · {viewData.periodLabel.toUpperCase()}
                 </span>
                 <h2 className="text-xl sm:text-2xl font-bold text-white tracking-tight mt-0.5">
                   Comunidades y Red de Franquiciados
@@ -928,69 +925,78 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard 
               )}
             </div>
 
-            {/* 3 Large Vibrant Community Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-5 my-auto">
+            {/* 3 Compact Community Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 my-2">
               {/* Community 1: UpConta Socios */}
-              <div className="p-6 rounded-2xl bg-gradient-to-b from-[#0f1d38] to-[#0a1224] border border-sky-500/40 shadow-xl flex flex-col justify-between relative group">
+              <div className="p-4 rounded-xl bg-gradient-to-b from-[#0f1d38] to-[#0a1224] border border-sky-500/40 shadow-xl flex flex-col justify-between relative group">
                 <div>
                   <div className="flex items-center justify-between">
-                    <h3 className="text-base font-bold text-white">UpConta Socios</h3>
+                    <h3 className="text-sm font-bold text-white">UpConta Socios</h3>
                     <span className="text-[10px] px-2 py-0.5 rounded bg-sky-500/20 text-sky-300 font-semibold">
                       UpConnect Directo
                     </span>
                   </div>
-                  <div className="text-4xl font-black text-sky-400 tabular-nums my-4">
+                  <div className="text-3xl font-black text-sky-400 tabular-nums my-2">
                     {upcontaMembers}
                   </div>
-                  <div className="text-xs text-slate-400 mb-2 font-medium">Miembros Registrados</div>
+                  <div className="text-[11px] text-slate-400 font-medium">Socios Registrados</div>
                 </div>
-                <p className="text-xs text-slate-300 leading-relaxed border-t border-slate-800 pt-3">
-                  Red principal de socios estratégicos y contadores vinculados a la plataforma UpConnect.
+                <p className="text-[11px] text-slate-300 leading-relaxed border-t border-slate-800 pt-2 mt-1">
+                  Red principal de socios estratégicos y contadores vinculados a UpConnect.
                 </p>
               </div>
 
               {/* Community 2: Franquicia Contadores VIP */}
-              <div className="p-6 rounded-2xl bg-gradient-to-b from-[#241338] to-[#120a1f] border border-purple-500/40 shadow-xl flex flex-col justify-between relative group">
+              <div className="p-4 rounded-xl bg-gradient-to-b from-[#241338] to-[#120a1f] border border-purple-500/40 shadow-xl flex flex-col justify-between relative group">
                 <div>
                   <div className="flex items-center justify-between">
-                    <h3 className="text-base font-bold text-white">Franquicia Contadores VIP</h3>
+                    <h3 className="text-sm font-bold text-white">Franquicia Contadores VIP</h3>
                     <span className="text-[10px] px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 font-semibold">
                       Connectors Aliados
                     </span>
                   </div>
-                  <div className="text-4xl font-black text-purple-400 tabular-nums my-4">
+                  <div className="text-3xl font-black text-purple-400 tabular-nums my-2">
                     {franquiciaMembers}
                   </div>
-                  <div className="text-xs text-slate-400 mb-2 font-medium">Miembros Registrados</div>
+                  <div className="text-[11px] text-slate-400 font-medium">Socios Registrados</div>
                 </div>
-                <p className="text-xs text-slate-300 leading-relaxed border-t border-slate-800 pt-3">
-                  Grupo élite de contadores franquiciados y red externa de distribución comercial Connectors.
+                <p className="text-[11px] text-slate-300 leading-relaxed border-t border-slate-800 pt-2 mt-1">
+                  Grupo élite de contadores franquiciados y red externa Connectors.
                 </p>
               </div>
 
               {/* Community 3: Formación Comercial */}
-              <div className="p-6 rounded-2xl bg-gradient-to-b from-[#0d2e26] to-[#071713] border border-emerald-500/40 shadow-xl flex flex-col justify-between relative group">
+              <div className="p-4 rounded-xl bg-gradient-to-b from-[#0d2e26] to-[#071713] border border-emerald-500/40 shadow-xl flex flex-col justify-between relative group">
                 <div>
                   <div className="flex items-center justify-between">
-                    <h3 className="text-base font-bold text-white">Formación Comercial</h3>
+                    <h3 className="text-sm font-bold text-white">Formación Comercial</h3>
                     <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-semibold">
                       Capacitación
                     </span>
                   </div>
-                  <div className="text-4xl font-black text-emerald-400 tabular-nums my-4">
+                  <div className="text-3xl font-black text-emerald-400 tabular-nums my-2">
                     {formacionMembers}
                   </div>
-                  <div className="text-xs text-slate-400 mb-2 font-medium">Miembros en Formación</div>
+                  <div className="text-[11px] text-slate-400 font-medium">Miembros en Formación</div>
                 </div>
-                <p className="text-xs text-slate-300 leading-relaxed border-t border-slate-800 pt-3">
-                  Programa activo de capacitación comercial, habilitación técnica y nuevo grupo de formación.
+                <p className="text-[11px] text-slate-300 leading-relaxed border-t border-slate-800 pt-2 mt-1">
+                  Programa activo de habilitación técnica y comercial de nuevos socios.
                 </p>
               </div>
             </div>
 
+            {/* TABLA ADICIONAL: Cantidad de Socios UpConnect vs Connectors */}
+            <div className="my-1">
+              <SociosChannelTable
+                summary={viewData.sociosSummary}
+                variant="slide"
+                title="Distribución y Cantidad de Socios por Canal: UpConnect vs Connectors"
+              />
+            </div>
+
             {/* Bottom official ecosystem banner */}
-            <div className="p-3 rounded-xl bg-slate-900/90 border border-slate-800 text-xs text-slate-300 text-center">
-              Ecosistema oficial: <strong className="text-white">{upcontaMembers + franquiciaMembers} operadores registrados</strong> ({upcontaMembers} Upconnect / {franquiciaMembers} Connectors) y{' '}
+            <div className="p-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-xs text-slate-300 text-center">
+              Ecosistema oficial: <strong className="text-white">{upcontaMembers + franquiciaMembers} operadores en cartera</strong> ({upcontaMembers} UpConnect / {franquiciaMembers} Connectors) y{' '}
               <strong className="text-sky-400">{upcontaMembers + franquiciaMembers + formacionMembers} miembros en comunidades oficiales</strong>.
               {isManuallyModified && (
                 <span className="ml-2 text-amber-400 font-medium text-[11px]">(Valores personalizados manualmente)</span>
@@ -1017,10 +1023,21 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard 
               </div>
 
               <div className="flex items-center gap-3">
+                {/* Channel summary count pill */}
+                <div className="px-3 py-1.5 rounded-xl bg-slate-900/90 border border-slate-700 text-right">
+                  <div className="text-[9px] uppercase font-semibold text-slate-400">DISTRIBUCIÓN CANAL</div>
+                  <div className="text-xs font-bold text-white tabular-nums">
+                    <span className="text-sky-400 font-extrabold">{viewData.sociosSummary.upconnect.count} UP</span>
+                    <span className="text-slate-500 mx-1">/</span>
+                    <span className="text-amber-400 font-extrabold">{viewData.sociosSummary.connectors.count} CO</span>
+                  </div>
+                </div>
+
                 <div className="px-3.5 py-1.5 rounded-xl bg-slate-900/90 border border-slate-700 text-right">
                   <div className="text-[9px] uppercase font-semibold text-slate-400">CARTERA ACTIVA</div>
-                  <div className="text-sm font-bold text-white tabular-nums">{activeSocios.length} Vendedores</div>
+                  <div className="text-sm font-bold text-white tabular-nums">{viewData.sociosSummary.totalSociosCount} Vendedores</div>
                 </div>
+
                 <div className="px-3.5 py-1.5 rounded-xl bg-slate-900/90 border border-slate-700 text-right">
                   <div className="text-[9px] uppercase font-semibold text-slate-400">FACTURACIÓN CARTERA</div>
                   <div className="text-sm font-bold text-emerald-400 tabular-nums">
@@ -1030,74 +1047,117 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard 
               </div>
             </div>
 
-            {/* Table or Ranking View */}
-            <div className="my-auto flex-1 overflow-hidden flex flex-col justify-center py-2">
-              <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-900/70 max-h-[360px]">
-                <table className="w-full text-xs text-left">
-                  <thead className="sticky top-0 bg-[#0d1627] text-slate-400 border-b border-slate-800 z-10">
-                    <tr>
-                      <th className="py-2.5 px-3 font-semibold text-center w-12">#</th>
-                      <th className="py-2.5 px-3 font-semibold">Nombre Socio / Vendedor</th>
-                      <th className="py-2.5 px-3 font-semibold">Rol / Canal</th>
-                      <th className="py-2.5 px-3 font-semibold text-center">Operaciones</th>
-                      <th className="py-2.5 px-3 font-semibold text-right">Monto Total ($)</th>
-                      <th className="py-2.5 px-3 font-semibold text-right">Ticket Prom. ($)</th>
-                      <th className="py-2.5 px-3 font-semibold">Plan Más Vendido</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800/50 text-slate-300 tabular-nums">
-                    {activeSocios.length === 0 ? (
-                      <tr>
-                        <td colSpan={7} className="py-8 text-center text-slate-500">
-                          Sin vendedores registrados. Cargue el archivo de firmas o socios en el Dashboard.
-                        </td>
-                      </tr>
-                    ) : (
-                      activeSocios.slice(0, 10).map((s) => {
-                        const avg = s.averageTicket ?? (s.operationsCount ? s.totalSales / s.operationsCount : s.totalSales);
-                        const isTop3 = s.rank <= 3;
-                        return (
-                          <tr key={s.rank} className="hover:bg-slate-800/40 transition-colors">
-                            <td className="py-2 px-3 text-center">
-                              <span className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold ${
-                                s.rank === 1 ? 'bg-amber-500 text-slate-950 font-black' : isTop3 ? 'bg-slate-700 text-amber-300' : 'text-slate-500'
-                              }`}>
-                                {s.rank}
-                              </span>
-                            </td>
-                            <td className="py-2 px-3 font-medium text-white flex items-center gap-1.5">
-                              <span>{s.name}</span>
-                              {s.note && (
-                                <span className="px-1.5 py-0.2 rounded text-[9px] bg-sky-500/20 text-sky-300 font-semibold">
-                                  {s.note}
-                                </span>
-                              )}
-                            </td>
-                            <td className="py-2 px-3 text-slate-400">
-                              <span className="px-2 py-0.5 rounded text-[10px] bg-slate-800 border border-slate-700 text-slate-300">
-                                {s.role || 'Distribuidor Connect'}
-                              </span>
-                            </td>
-                            <td className="py-2 px-3 text-center font-semibold text-slate-200">
-                              {s.operationsCount || 1}
-                            </td>
-                            <td className="py-2 px-3 text-right font-bold text-emerald-400">
-                              ${s.totalSales.toFixed(2)}
-                            </td>
-                            <td className="py-2 px-3 text-right font-medium text-sky-400">
-                              ${avg.toFixed(2)}
-                            </td>
-                            <td className="py-2 px-3 text-slate-300 max-w-[180px] truncate">
-                              {s.topPlan || 'Firma Electrónica (1 año)'}
-                            </td>
-                          </tr>
-                        );
-                      })
-                    )}
-                  </tbody>
-                </table>
+            {/* View Mode Toggle: Tabla Individual vs Resumen por Canales */}
+            <div className="flex items-center justify-between mt-2 mb-1">
+              <span className="text-xs text-slate-400">
+                {sociosViewMode === 'channels'
+                  ? 'Mostrando resumen cuantitativo de Socios UpConnect vs Connectors'
+                  : 'Mostrando ranking individual de vendedores auditados'}
+              </span>
+              <div className="flex items-center p-1 bg-slate-900 border border-slate-700/80 rounded-xl">
+                <button
+                  onClick={() => setSociosViewMode('table')}
+                  className={`flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-lg transition-all ${
+                    sociosViewMode === 'table' ? 'bg-sky-600 text-white' : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Table className="w-3.5 h-3.5" />
+                  <span>Ranking Individual</span>
+                </button>
+                <button
+                  onClick={() => setSociosViewMode('channels')}
+                  className={`flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-lg transition-all ${
+                    sociosViewMode === 'channels' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Users className="w-3.5 h-3.5" />
+                  <span>Resumen Canales ({viewData.sociosSummary.upconnect.count} UP / {viewData.sociosSummary.connectors.count} CO)</span>
+                </button>
               </div>
             </div>
+
+            {/* Content: Channels Table or Detailed Table */}
+            {sociosViewMode === 'channels' ? (
+              <div className="my-auto py-2">
+                <SociosChannelTable
+                  summary={viewData.sociosSummary}
+                  variant="slide"
+                  title="Cantidad y Rendimiento de Socios por Canal"
+                />
+              </div>
+            ) : (
+              <div className="my-auto flex-1 overflow-hidden flex flex-col justify-center py-2">
+                <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-900/70 max-h-[340px]">
+                  <table className="w-full text-xs text-left">
+                    <thead className="sticky top-0 bg-[#0d1627] text-slate-400 border-b border-slate-800 z-10">
+                      <tr>
+                        <th className="py-2.5 px-3 font-semibold text-center w-12">#</th>
+                        <th className="py-2.5 px-3 font-semibold">Nombre Socio / Vendedor</th>
+                        <th className="py-2.5 px-3 font-semibold">Rol / Canal</th>
+                        <th className="py-2.5 px-3 font-semibold text-center">Operaciones</th>
+                        <th className="py-2.5 px-3 font-semibold text-right">Monto Total ($)</th>
+                        <th className="py-2.5 px-3 font-semibold text-right">Ticket Prom. ($)</th>
+                        <th className="py-2.5 px-3 font-semibold">Plan Más Vendido</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/50 text-slate-300 tabular-nums">
+                      {activeSocios.length === 0 ? (
+                        <tr>
+                          <td colSpan={7} className="py-8 text-center text-slate-500">
+                            Sin vendedores registrados. Cargue el archivo de firmas o socios en el Dashboard.
+                          </td>
+                        </tr>
+                      ) : (
+                        activeSocios.slice(0, 10).map((s) => {
+                          const avg = s.averageTicket ?? (s.operationsCount ? s.totalSales / s.operationsCount : s.totalSales);
+                          const isTop3 = s.rank <= 3;
+                          return (
+                            <tr key={s.rank} className="hover:bg-slate-800/40 transition-colors">
+                              <td className="py-2 px-3 text-center">
+                                <span className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold ${
+                                  s.rank === 1 ? 'bg-amber-500 text-slate-950 font-black' : isTop3 ? 'bg-slate-700 text-amber-300' : 'text-slate-500'
+                                }`}>
+                                  {s.rank}
+                                </span>
+                              </td>
+                              <td className="py-2 px-3 font-medium text-white flex items-center gap-1.5">
+                                <span>{s.name}</span>
+                                {s.note && (
+                                  <span className="px-1.5 py-0.2 rounded text-[9px] bg-sky-500/20 text-sky-300 font-semibold">
+                                    {s.note}
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-2 px-3 text-slate-400">
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-medium border ${
+                                  s.channel === 'UpConnect'
+                                    ? 'bg-sky-500/10 text-sky-300 border-sky-500/30'
+                                    : 'bg-amber-500/10 text-amber-300 border-amber-500/30'
+                                }`}>
+                                  {s.channel || (s.role || 'Distribuidor Connect')}
+                                </span>
+                              </td>
+                              <td className="py-2 px-3 text-center font-semibold text-slate-200">
+                                {s.operationsCount || 1}
+                              </td>
+                              <td className="py-2 px-3 text-right font-bold text-emerald-400">
+                                ${s.totalSales.toFixed(2)}
+                              </td>
+                              <td className="py-2 px-3 text-right font-medium text-sky-400">
+                                ${avg.toFixed(2)}
+                              </td>
+                              <td className="py-2 px-3 text-slate-300 max-w-[180px] truncate">
+                                {s.topPlan || 'Firma Electrónica (1 año)'}
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
 
             <div className="flex justify-between items-center text-[11px] text-slate-500 pt-2 border-t border-slate-800/60">
               <span>Auditoría de rendimiento comercial individual por vendedor con cálculo de ticket promedio real por firma.</span>

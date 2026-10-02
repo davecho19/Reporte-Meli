@@ -30,7 +30,8 @@ import {
   downloadTemplateFirmas, 
   downloadTemplateSocios 
 } from '../services/excelService';
-import { computeReportView } from '../utils/reportFilters';
+import { computeReportView, MONTH_NAMES_ES, extractTransactionMonth } from '../utils/reportFilters';
+import { SociosChannelTable } from './SociosChannelTable';
 
 interface Props {
   dataset: GlobalDataset;
@@ -39,6 +40,7 @@ interface Props {
   onClearData: () => void;
   onUpdateFilter: (filter: ReportTimeFilter) => void;
   onAddTransaction: (trx: TransactionRecord) => void;
+  onToggleSocioChannel?: (socioName: string) => void;
 }
 
 export const DashboardView: React.FC<Props> = ({
@@ -48,6 +50,7 @@ export const DashboardView: React.FC<Props> = ({
   onClearData,
   onUpdateFilter,
   onAddTransaction,
+  onToggleSocioChannel,
 }) => {
   const currentFilter = dataset.reportFilter || { type: 'all' };
   const viewData = computeReportView(dataset);
@@ -63,6 +66,7 @@ export const DashboardView: React.FC<Props> = ({
   // Table tab: Socios vs Transactions
   const [activeTableTab, setActiveTableTab] = useState<'socios' | 'transactions'>('socios');
   const [socioSearchTerm, setSocioSearchTerm] = useState('');
+  const [socioChannelFilter, setSocioChannelFilter] = useState<'ALL' | 'UpConnect' | 'Connectors'>('ALL');
   const [socioPage, setSocioPage] = useState(1);
   const socioPageSize = 10;
 
@@ -72,6 +76,19 @@ export const DashboardView: React.FC<Props> = ({
   const [selectedWeekId, setSelectedWeekId] = useState<string>(currentFilter.weekId || 'w2');
   const [startDate, setStartDate] = useState<string>(currentFilter.startDate || '2026-09-01');
   const [endDate, setEndDate] = useState<string>(currentFilter.endDate || '2026-09-20');
+
+  const availableMonths = useMemo(() => {
+    const monthsSet = new Set<string>();
+    dataset.transactions.forEach((t) => {
+      const { monthName } = extractTransactionMonth(t);
+      if (monthName) monthsSet.add(monthName);
+    });
+    dataset.monthlyMetrics.forEach((m) => {
+      if (m.month) monthsSet.add(m.month.toUpperCase());
+    });
+    const months = MONTH_NAMES_ES.filter((m) => monthsSet.has(m));
+    return months.length > 0 ? months : ['AGOSTO', 'SEPTIEMBRE', 'OCTUBRE'];
+  }, [dataset.transactions, dataset.monthlyMetrics]);
 
   const applyTimeFilter = (mode: 'all' | 'month' | 'week' | 'range') => {
     setFilterMode(mode);
@@ -126,6 +143,9 @@ export const DashboardView: React.FC<Props> = ({
   // Filtered & paginated socios for the detailed socios table
   const filteredSociosList = useMemo(() => {
     return viewData.socios.filter((s) => {
+      if (socioChannelFilter !== 'ALL' && s.channel !== socioChannelFilter) {
+        return false;
+      }
       if (!socioSearchTerm) return true;
       const term = socioSearchTerm.toLowerCase();
       return (
@@ -134,7 +154,7 @@ export const DashboardView: React.FC<Props> = ({
         (s.topPlan && s.topPlan.toLowerCase().includes(term))
       );
     });
-  }, [viewData.socios, socioSearchTerm]);
+  }, [viewData.socios, socioSearchTerm, socioChannelFilter]);
 
   const totalSocioPages = Math.ceil(filteredSociosList.length / socioPageSize) || 1;
   const paginatedSocios = filteredSociosList.slice((socioPage - 1) * socioPageSize, socioPage * socioPageSize);
@@ -276,7 +296,7 @@ export const DashboardView: React.FC<Props> = ({
                 }}
                 className="bg-slate-900 border border-slate-700 text-white rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-sky-500 font-semibold"
               >
-                {['MARZO', 'ABRIL', 'MAYO', 'JUNIO', 'JULIO', 'AGOSTO', 'SEPTIEMBRE'].map((m) => (
+                {['ENERO', 'FEBRERO', 'MARZO', 'ABRIL', 'MAYO', 'JUNIO', 'JULIO', 'AGOSTO', 'SEPTIEMBRE', 'OCTUBRE', 'NOVIEMBRE', 'DICIEMBRE'].map((m) => (
                   <option key={m} value={m}>{m}</option>
                 ))}
               </select>
@@ -389,15 +409,20 @@ export const DashboardView: React.FC<Props> = ({
         {/* KPI 3 */}
         <div className="p-5 rounded-2xl bg-[#0e1626] border border-slate-800/90 shadow-xl relative overflow-hidden group hover:border-purple-500/40 transition-colors">
           <div className="flex items-center justify-between text-xs text-slate-400 font-semibold mb-2">
-            <span>SOCIOS CON VENTAS</span>
+            <span>SOCIOS EN CARTERA</span>
             <div className="w-8 h-8 rounded-lg bg-purple-500/10 text-purple-400 flex items-center justify-center">
               <Users2 className="w-4 h-4" />
             </div>
           </div>
           <div className="text-3xl font-black text-white tabular-nums tracking-tight">
-            {viewData.socios.length}
+            {viewData.sociosSummary.totalSociosCount}
           </div>
-          <div className="mt-2 text-xs text-slate-400">
+          <div className="mt-2 flex items-center gap-2 text-xs">
+            <span className="text-sky-400 font-bold tabular-nums">UpConnect: {viewData.sociosSummary.upconnect.count}</span>
+            <span className="text-slate-600">·</span>
+            <span className="text-amber-400 font-bold tabular-nums">Connectors: {viewData.sociosSummary.connectors.count}</span>
+          </div>
+          <div className="mt-1 text-[11px] text-slate-400">
             Ticket promedio: <strong className="text-white">${avgTicket.toFixed(2)}</strong> / firma
           </div>
           <div className="absolute bottom-0 left-0 right-0 h-1 bg-purple-500" />
@@ -582,7 +607,7 @@ export const DashboardView: React.FC<Props> = ({
                 <div className="py-8 text-center text-slate-500 text-xs border border-dashed border-slate-800 rounded-xl px-4">
                   <p className="font-semibold text-slate-400">Sin socios registrados</p>
                   <p className="text-[11px] text-slate-500 mt-1">
-                    Cargue la plantilla de socios para visualizar el ranking y Pareto 80/20.
+                    Cargue el archivo de socios (7 columnas) para visualizar el ranking y sumarlo al Reporte 2.
                   </p>
                 </div>
               ) : (
@@ -662,6 +687,20 @@ export const DashboardView: React.FC<Props> = ({
         </div>
       )}
 
+      {/* TABLITA ADICIONAL: Cantidad de Socios UpConnect vs Connectors */}
+      <SociosChannelTable
+        summary={viewData.sociosSummary}
+        variant="full"
+        title="Distribución y Cantidad de Socios por Canal"
+        subtitle={`Resumen ejecutivo de cartera en ${viewData.periodLabel}: Conteo exacto de socios, operaciones y facturación`}
+        onFilterChannel={(ch) => {
+          setActiveTableTab('socios');
+          setSocioChannelFilter(ch);
+          setSocioPage(1);
+        }}
+        activeChannelFilter={socioChannelFilter}
+      />
+
       {/* DUAL-TABBED TABLE SECTION: Tabla Detallada de Socios & Registro de Firmas */}
       <div className="p-6 rounded-2xl bg-[#0e1626] border border-slate-800/90 shadow-xl space-y-5">
         {/* Tab switcher header */}
@@ -722,9 +761,10 @@ export const DashboardView: React.FC<Props> = ({
               <button
                 onClick={onOpenUploadSocios}
                 className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 transition-colors"
+                title="Cargar archivo Excel con formato de 7 columnas para sumar al Reporte 2"
               >
                 <Users2 className="w-3.5 h-3.5" />
-                <span>Cargar Socios (9 Col.)</span>
+                <span>Cargar Socios (7 Col.)</span>
               </button>
             </div>
           ) : (
@@ -786,13 +826,72 @@ export const DashboardView: React.FC<Props> = ({
         {/* TAB 1 CONTENT: TABLA DETALLADA DE SOCIOS */}
         {activeTableTab === 'socios' && (
           <div className="space-y-4">
+            {/* Period Indicator & Month Selector Bar for Socios */}
+            <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-slate-900/90 rounded-xl border border-slate-800 text-xs">
+              <div className="flex items-center gap-2">
+                <span className="text-slate-400">Periodo actual:</span>
+                <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30">
+                  {viewData.periodLabel}
+                </span>
+                <span className="text-slate-500">|</span>
+                <span className="text-slate-300">
+                  Total facturado: <strong className="text-emerald-400 font-bold">${viewData.socios.reduce((a, s) => a + s.totalSales, 0).toLocaleString('en-US', { minimumFractionDigits: 2 })} USD</strong>
+                </span>
+                <span className="text-slate-500">·</span>
+                <span className="text-slate-300">
+                  <strong className="text-white font-bold">{viewData.socios.reduce((a, s) => a + (s.operationsCount || 0), 0)}</strong> ventas conciliadas
+                </span>
+              </div>
+
+              {/* Quick month switch pills */}
+              <div className="flex items-center gap-1">
+                <span className="text-[11px] text-slate-400 mr-1">Filtrar Mes:</span>
+                <button
+                  onClick={() => applyTimeFilter('all')}
+                  className={`px-2 py-1 text-[11px] font-semibold rounded-md transition-colors ${
+                    filterMode === 'all' ? 'bg-sky-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Todos
+                </button>
+                {availableMonths.map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => {
+                      setSelectedMonthName(m);
+                      applyTimeFilter('month');
+                      onUpdateFilter({ type: 'month', month: m });
+                    }}
+                    className={`px-2 py-1 text-[11px] font-semibold rounded-md transition-colors ${
+                      filterMode === 'month' && selectedMonthName === m
+                        ? 'bg-emerald-600 text-white'
+                        : 'bg-slate-800 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    {m.charAt(0) + m.slice(1).toLowerCase()}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* TABLITA ADICIONAL: Cantidad de Socios UpConnect vs Connectors */}
+            <SociosChannelTable
+              summary={viewData.sociosSummary}
+              variant="full"
+              onFilterChannel={(ch) => {
+                setSocioChannelFilter(ch);
+                setSocioPage(1);
+              }}
+              activeChannelFilter={socioChannelFilter}
+            />
+
             <div className="overflow-x-auto border border-slate-800 rounded-xl">
               <table className="w-full text-xs text-left">
                 <thead className="bg-slate-900/95 text-slate-300 uppercase font-bold border-b border-slate-800 text-[11px]">
                   <tr>
                     <th className="py-3 px-3 w-12 text-center">#</th>
                     <th className="py-3 px-3">Nombre del Socio</th>
-                    <th className="py-3 px-3">Rol</th>
+                    <th className="py-3 px-3">Canal / Rol</th>
                     <th className="py-3 px-3 text-center">Cant. Ventas Realizadas</th>
                     <th className="py-3 px-3 text-right">Monto Total de Venta</th>
                     <th className="py-3 px-3 text-right">Ticket Promedio</th>
@@ -804,13 +903,16 @@ export const DashboardView: React.FC<Props> = ({
                     <tr>
                       <td colSpan={7} className="py-8 text-center text-slate-500">
                         {viewData.socios.length === 0 
-                          ? 'No hay socios registrados. Use el botón "Carga Archivo Socios" para importar el archivo con las 9 columnas.'
+                          ? 'No hay socios registrados para este periodo. Use el botón "Carga Archivo Socios" para importar el archivo de 7 columnas.'
+                          : socioChannelFilter !== 'ALL'
+                          ? `No se encontraron socios para el canal ${socioChannelFilter} con los filtros activos.`
                           : 'No se encontraron socios que coincidan con la búsqueda.'}
                       </td>
                     </tr>
                   ) : (
                     paginatedSocios.map((s) => {
                       const avg = s.averageTicket ?? (s.operationsCount ? (s.totalSales / s.operationsCount) : s.totalSales);
+                      const isUp = s.channel === 'UpConnect' || (!s.channel && !(s.role || '').toLowerCase().includes('connect'));
                       return (
                         <tr key={s.rank} className="hover:bg-slate-850/40 transition-colors">
                           <td className="py-2.5 px-3 text-center">
@@ -837,15 +939,28 @@ export const DashboardView: React.FC<Props> = ({
                             </div>
                           </td>
                           <td className="py-2.5 px-3">
-                            <span className={`px-2 py-0.5 rounded text-[10px] font-semibold border ${
-                              (s.role || '').toLowerCase().includes('connect')
-                                ? 'bg-blue-500/10 text-sky-300 border-blue-500/20'
-                                : (s.role || '').toLowerCase().includes('vip') || (s.role || '').toLowerCase().includes('franquicia')
-                                ? 'bg-purple-500/10 text-purple-300 border-purple-500/20'
-                                : 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20'
-                            }`}>
-                              {s.role || 'Distribuidor Connect'}
-                            </span>
+                            <div className="flex flex-col gap-1 items-start">
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold border flex items-center gap-1 ${
+                                isUp
+                                  ? 'bg-sky-500/10 text-sky-300 border-sky-500/30'
+                                  : 'bg-amber-500/10 text-amber-300 border-amber-500/30'
+                              }`}>
+                                <span className={`w-1.5 h-1.5 rounded-full ${isUp ? 'bg-sky-400' : 'bg-amber-400'}`} />
+                                <span>{isUp ? 'UpConnect' : 'Connectors'}</span>
+                                {onToggleSocioChannel && (
+                                  <button
+                                    onClick={() => onToggleSocioChannel(s.name)}
+                                    className="ml-1 text-[9px] text-slate-400 hover:text-white underline cursor-pointer"
+                                    title="Alternar canal (UpConnect / Connectors)"
+                                  >
+                                    Cambiar
+                                  </button>
+                                )}
+                              </span>
+                              <span className="text-[10px] text-slate-400">
+                                {s.role || (isUp ? 'UpConnect Directo' : 'Distribuidor Connect')}
+                              </span>
+                            </div>
                           </td>
                           <td className="py-2.5 px-3 text-center font-bold text-slate-200 tabular-nums">
                             {s.operationsCount || 1}

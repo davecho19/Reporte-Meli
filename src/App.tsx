@@ -27,7 +27,12 @@ export default function App() {
   const [currentView, setCurrentView] = useState<NavView>('dashboard');
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [uploadTargetType, setUploadTargetType] = useState<UploadTargetType>('firma');
-  const [toast, setToast] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
+  const [toast, setToast] = useState<{ 
+    type: 'success' | 'error' | 'info'; 
+    message: string;
+    actionLabel?: string;
+    onAction?: () => void;
+  } | null>(null);
 
   // Initialize dataset from localStorage or fallback to audited initialDataset
   const [dataset, setDataset] = useState<GlobalDataset>(() => {
@@ -56,12 +61,12 @@ export default function App() {
     if (!toast) return;
     const timer = setTimeout(() => {
       setToast(null);
-    }, 4500);
+    }, 6000);
     return () => clearTimeout(timer);
   }, [toast]);
 
-  const showToast = (type: 'success' | 'error' | 'info', message: string) => {
-    setToast({ type, message });
+  const showToast = (type: 'success' | 'error' | 'info', message: string, actionLabel?: string, onAction?: () => void) => {
+    setToast({ type, message, actionLabel, onAction });
   };
 
   const handleOpenUploadFirma = () => {
@@ -99,6 +104,9 @@ export default function App() {
     transactions?: TransactionRecord[];
     monthlyMetrics?: MonthlyMetric[];
     socios?: SocioRecord[];
+    detectedMonth?: string;
+    detectedCutoffDate?: string;
+    dateRangeStr?: string;
     mode: 'append' | 'replace';
   }) => {
     let updatedDataset: GlobalDataset = { ...dataset, updatedAt: new Date().toISOString() };
@@ -118,7 +126,6 @@ export default function App() {
       }
 
       updatedDataset.transactions = finalTrx;
-      // Derive monthly metrics and all presentation models from transactions so monthly charts, tables and reports are always synchronized
       updatedDataset.monthlyMetrics = deriveMonthlyMetricsFromTransactions(finalTrx);
       updatedDataset.portfolioDurations = derivePortfolioDurationsFromTransactions(finalTrx);
       const weekly = deriveWeeklyBreakdownFromTransactions(finalTrx);
@@ -127,61 +134,132 @@ export default function App() {
       updatedDataset.solutionCategories = deriveSolutionCategoriesFromTransactions(finalTrx);
       updatedDataset.commercialCross = deriveCommercialCrossFromTransactions(finalTrx);
 
-      // Compute cutoff date from the latest transaction date
-      const validDates = finalTrx
-        .map((t) => new Date(t.date))
-        .filter((d) => !isNaN(d.getTime()))
-        .sort((a, b) => b.getTime() - a.getTime());
-      if (validDates.length > 0) {
-        updatedDataset.cutoffDate = formatSpanishDateCutoff(validDates[0]);
+      // Reconcile socios directly from final transactions to prevent double-counting
+      const socioMap: Record<string, { total: number; count: number; role: string; plans: Record<string, number> }> = {};
+      finalTrx.forEach((t) => {
+        const sName = (t.socio || (t.channel === 'Connectors' ? 'Distribuidor Connect' : 'UpConnect Directo')).trim();
+        if (!socioMap[sName]) {
+          socioMap[sName] = { total: 0, count: 0, role: t.role || 'Distribuidor Connect', plans: {} };
+        }
+        socioMap[sName].total = parseFloat((socioMap[sName].total + t.value).toFixed(2));
+        socioMap[sName].count += 1;
+        if (t.role && t.role !== 'Distribuidor Connect') socioMap[sName].role = t.role;
+        const planName = t.solutionCategory ? `${t.solutionCategory} (${t.duration})` : (t.duration || 'Plan Estándar');
+        socioMap[sName].plans[planName] = (socioMap[sName].plans[planName] || 0) + 1;
+      });
+
+      const ranked: SocioRecord[] = Object.entries(socioMap)
+        .map(([name, data]) => {
+          let topPlan = 'Firma Electrónica (1 año)';
+          let maxCount = -1;
+          for (const [pName, count] of Object.entries(data.plans)) {
+            if (count > maxCount) {
+              maxCount = count;
+              topPlan = pName;
+            }
+          }
+          const averageTicket = data.count > 0 ? (data.total / data.count) : 0;
+          return {
+            rank: 0,
+            name,
+            totalSales: parseFloat(data.total.toFixed(2)),
+            group: 'TOP 1-10' as const,
+            operationsCount: data.count,
+            averageTicket: parseFloat(averageTicket.toFixed(2)),
+            topPlan,
+            role: data.role || 'Distribuidor Connect',
+            note: undefined,
+          };
+        })
+        .sort((a, b) => b.totalSales - a.totalSales);
+
+      ranked.forEach((s, idx) => {
+        s.rank = idx + 1;
+        s.group = idx < 10 ? 'TOP 1-10' : 'TOP 11-20';
+        if (idx === 0) s.note = 'Líder en Ventas';
+      });
+
+      if (ranked.length > 0) {
+        updatedDataset.socios = ranked;
       }
 
-      // Always update socios with full detailed metrics (name, role, operations, totalSales, averageTicket, topPlan)
-      if (result.socios && result.socios.length > 0) {
-        if (result.mode === 'replace') {
-          updatedDataset.socios = result.socios;
-        } else {
-          // Merge socios in append mode
-          const socioMap = new Map<string, SocioRecord>();
-          dataset.socios.forEach((s) => socioMap.set(s.name.toLowerCase().trim(), { ...s }));
-          result.socios.forEach((ns) => {
-            const key = ns.name.toLowerCase().trim();
-            if (socioMap.has(key)) {
-              const ex = socioMap.get(key)!;
-              ex.totalSales = parseFloat((ex.totalSales + ns.totalSales).toFixed(2));
-              ex.operationsCount = (ex.operationsCount || 0) + (ns.operationsCount || 1);
-              ex.averageTicket = ex.operationsCount > 0 ? parseFloat((ex.totalSales / ex.operationsCount).toFixed(2)) : ex.totalSales;
-              if (ns.topPlan) ex.topPlan = ns.topPlan;
-              if (ns.role) ex.role = ns.role;
-            } else {
-              socioMap.set(key, ns);
-            }
-          });
-          const reRanked = Array.from(socioMap.values()).sort((a, b) => b.totalSales - a.totalSales);
-          reRanked.forEach((s, idx) => {
-            s.rank = idx + 1;
-            s.group = idx < 10 ? 'TOP 1-10' : 'TOP 11-20';
-            if (idx === 0) s.note = 'Líder en Ventas';
-          });
-          updatedDataset.socios = reRanked;
-        }
+      if (result.detectedCutoffDate) {
+        updatedDataset.cutoffDate = result.detectedCutoffDate;
       } else {
-        const socioMap: Record<string, { total: number; count: number; role: string; plans: Record<string, number> }> = {};
+        const validDates = finalTrx
+          .map((t) => new Date(t.date))
+          .filter((d) => !isNaN(d.getTime()))
+          .sort((a, b) => b.getTime() - a.getTime());
+        if (validDates.length > 0) {
+          updatedDataset.cutoffDate = formatSpanishDateCutoff(validDates[0]);
+        }
+      }
+
+      if (result.detectedMonth) {
+        updatedDataset.reportFilter = {
+          type: 'month',
+          month: result.detectedMonth,
+        };
+      }
+    } else if (result.type === 'socios') {
+      let finalTrx: TransactionRecord[] = [];
+
+      if (result.transactions && result.transactions.length > 0) {
+        if (result.mode === 'append') {
+          const existingIds = new Set(dataset.transactions.map((t) => t.uniqueId));
+          const filteredNew = result.transactions.filter((t) => !existingIds.has(t.uniqueId));
+          finalTrx = [...filteredNew, ...dataset.transactions];
+        } else {
+          finalTrx = result.transactions;
+        }
+        updatedDataset.transactions = finalTrx;
+        updatedDataset.monthlyMetrics = deriveMonthlyMetricsFromTransactions(finalTrx);
+        updatedDataset.portfolioDurations = derivePortfolioDurationsFromTransactions(finalTrx);
+        const weekly = deriveWeeklyBreakdownFromTransactions(finalTrx);
+        updatedDataset.weeklyBreakdownType1 = weekly.type1;
+        updatedDataset.weeklyBreakdownType2 = weekly.type2;
+        updatedDataset.solutionCategories = deriveSolutionCategoriesFromTransactions(finalTrx);
+        updatedDataset.commercialCross = deriveCommercialCrossFromTransactions(finalTrx);
+
+        // Derive socios strictly from final transactions to guarantee 100% exact math per month
+        const socioMap: Record<string, {
+          total: number;
+          count: number;
+          role: string;
+          channel?: 'UpConnect' | 'Connectors';
+          upOps: number;
+          coOps: number;
+          plans: Record<string, number>;
+        }> = {};
+
         finalTrx.forEach((t) => {
-          const sName = t.socio || (t.channel === 'Connectors' ? 'Distribuidor Connect' : 'UpConnect Directo');
+          const sName = (t.socio || (t.channel === 'Connectors' ? 'Distribuidor Connect' : 'UpConnect Directo')).trim();
           if (!socioMap[sName]) {
-            socioMap[sName] = { total: 0, count: 0, role: t.role || 'Distribuidor Connect', plans: {} };
+            socioMap[sName] = { 
+              total: 0, 
+              count: 0, 
+              role: t.role || (t.channel === 'Connectors' ? 'Distribuidor Connect' : 'UpConnect Directo'), 
+              channel: t.channel,
+              upOps: 0,
+              coOps: 0,
+              plans: {} 
+            };
           }
-          socioMap[sName].total += t.value;
+          socioMap[sName].total = parseFloat((socioMap[sName].total + t.value).toFixed(2));
           socioMap[sName].count += 1;
-          if (t.role && t.role !== 'Distribuidor Connect') socioMap[sName].role = t.role;
-          const planName = t.solutionCategory ? `${t.solutionCategory} (${t.duration})` : (t.duration || 'Plan Estándar');
+          if (t.channel === 'Connectors') socioMap[sName].coOps += 1;
+          else socioMap[sName].upOps += 1;
+
+          if (t.role && t.role !== 'Distribuidor Connect' && t.role !== 'UpConnect Directo') socioMap[sName].role = t.role;
+          const planName = t.solutionCategory
+            ? (t.solutionCategory.includes('(') ? t.solutionCategory : (t.duration && t.duration !== 'Un año' ? `${t.solutionCategory} (${t.duration})` : t.solutionCategory))
+            : (t.duration || 'UP INTERMEDIO ($17.25)');
           socioMap[sName].plans[planName] = (socioMap[sName].plans[planName] || 0) + 1;
         });
 
         const ranked: SocioRecord[] = Object.entries(socioMap)
           .map(([name, data]) => {
-            let topPlan = 'Firma Electrónica (1 año)';
+            let topPlan = 'UP INTERMEDIO ($17.25)';
             let maxCount = -1;
             for (const [pName, count] of Object.entries(data.plans)) {
               if (count > maxCount) {
@@ -190,6 +268,13 @@ export default function App() {
               }
             }
             const averageTicket = data.count > 0 ? (data.total / data.count) : 0;
+            const channel: 'UpConnect' | 'Connectors' = data.coOps > data.upOps 
+              ? 'Connectors' 
+              : data.upOps > data.coOps 
+              ? 'UpConnect' 
+              : (data.channel || 'Connectors');
+            const role = data.role || (channel === 'Connectors' ? 'Distribuidor Connect' : 'UpConnect Directo');
+
             return {
               rank: 0,
               name,
@@ -198,7 +283,8 @@ export default function App() {
               operationsCount: data.count,
               averageTicket: parseFloat(averageTicket.toFixed(2)),
               topPlan,
-              role: data.role || 'Distribuidor Connect',
+              role,
+              channel,
               note: undefined,
             };
           })
@@ -210,57 +296,15 @@ export default function App() {
           if (idx === 0) s.note = 'Líder en Ventas';
         });
 
-        if (ranked.length > 0) {
-          updatedDataset.socios = ranked;
-        }
-      }
-    } else if (result.type === 'socios' && result.socios) {
-      if (result.mode === 'append') {
-        const socioMap = new Map<string, SocioRecord>();
-        dataset.socios.forEach((s) => socioMap.set(s.name.toLowerCase().trim(), { ...s }));
-        result.socios.forEach((ns) => {
-          const key = ns.name.toLowerCase().trim();
-          if (socioMap.has(key)) {
-            const ex = socioMap.get(key)!;
-            ex.totalSales = parseFloat((ex.totalSales + ns.totalSales).toFixed(2));
-            ex.operationsCount = (ex.operationsCount || 0) + (ns.operationsCount || 1);
-            ex.averageTicket = ex.operationsCount > 0 ? parseFloat((ex.totalSales / ex.operationsCount).toFixed(2)) : ex.totalSales;
-            if (ns.topPlan) ex.topPlan = ns.topPlan;
-            if (ns.role) ex.role = ns.role;
-          } else {
-            socioMap.set(key, ns);
-          }
-        });
-        const reRanked = Array.from(socioMap.values()).sort((a, b) => b.totalSales - a.totalSales);
-        reRanked.forEach((s, idx) => {
-          s.rank = idx + 1;
-          s.group = idx < 10 ? 'TOP 1-10' : 'TOP 11-20';
-          if (idx === 0) s.note = 'Líder en Ventas';
-        });
-        updatedDataset.socios = reRanked;
-        showToast('success', `Se sincronizaron ${result.socios.length} socios en la cartera.`);
-      } else {
+        updatedDataset.socios = ranked;
+      } else if (result.socios && result.socios.length > 0) {
         updatedDataset.socios = result.socios;
-        showToast('success', `Se actualizó la cartera con ${result.socios.length} socios.`);
       }
 
-      // If transactions were extracted from the 9 columns of the socios file, incorporate them
-      if (result.transactions && result.transactions.length > 0) {
-        if (result.mode === 'append') {
-          updatedDataset.transactions = [...result.transactions, ...dataset.transactions];
-        } else {
-          updatedDataset.transactions = result.transactions;
-        }
-
-        updatedDataset.monthlyMetrics = deriveMonthlyMetricsFromTransactions(updatedDataset.transactions);
-        updatedDataset.portfolioDurations = derivePortfolioDurationsFromTransactions(updatedDataset.transactions);
-        const weekly = deriveWeeklyBreakdownFromTransactions(updatedDataset.transactions);
-        updatedDataset.weeklyBreakdownType1 = weekly.type1;
-        updatedDataset.weeklyBreakdownType2 = weekly.type2;
-        updatedDataset.solutionCategories = deriveSolutionCategoriesFromTransactions(updatedDataset.transactions);
-        updatedDataset.commercialCross = deriveCommercialCrossFromTransactions(updatedDataset.transactions);
-
-        const validDates = updatedDataset.transactions
+      if (result.detectedCutoffDate) {
+        updatedDataset.cutoffDate = result.detectedCutoffDate;
+      } else if (finalTrx.length > 0) {
+        const validDates = finalTrx
           .map((t) => new Date(t.date))
           .filter((d) => !isNaN(d.getTime()))
           .sort((a, b) => b.getTime() - a.getTime());
@@ -268,6 +312,21 @@ export default function App() {
           updatedDataset.cutoffDate = formatSpanishDateCutoff(validDates[0]);
         }
       }
+
+      // Automatically focus on the identified month!
+      if (result.detectedMonth) {
+        updatedDataset.reportFilter = {
+          type: 'month',
+          month: result.detectedMonth,
+        };
+      }
+
+      showToast(
+        'success',
+        `Se sincronizó el Reporte 2 con las ventas de socios del mes de ${result.detectedMonth || 'SEPTIEMBRE'} (${result.transactions?.length || 0} emisiones conciliadas).`,
+        'Ver Reporte 2',
+        () => setCurrentView('presentation2')
+      );
     } else if (result.type === 'monthly_summary' && result.monthlyMetrics) {
       updatedDataset.monthlyMetrics = result.monthlyMetrics;
       showToast('success', 'Matriz de facturación mensual actualizada exitosamente.');
@@ -320,6 +379,36 @@ export default function App() {
     showToast('success', `Transacción ${trx.uniqueId} agregada.`);
   };
 
+  const handleToggleSocioChannel = (socioName: string) => {
+    const updatedSocios = dataset.socios.map((s) => {
+      if (s.name.toLowerCase().trim() === socioName.toLowerCase().trim()) {
+        const currentCh = s.channel || (s.role?.toLowerCase().includes('connect') ? 'Connectors' : 'UpConnect');
+        const newChannel: 'UpConnect' | 'Connectors' = currentCh === 'UpConnect' ? 'Connectors' : 'UpConnect';
+        const newRole = newChannel === 'Connectors' ? 'Distribuidor Connect' : 'UpConnect Directo';
+        return { ...s, channel: newChannel, role: newRole };
+      }
+      return s;
+    });
+
+    const updatedTrx = dataset.transactions.map((t) => {
+      if ((t.socio || '').toLowerCase().trim() === socioName.toLowerCase().trim()) {
+        const currentCh = t.channel || 'Connectors';
+        const newChannel: 'UpConnect' | 'Connectors' = currentCh === 'UpConnect' ? 'Connectors' : 'UpConnect';
+        return { ...t, channel: newChannel };
+      }
+      return t;
+    });
+
+    const updated = {
+      ...dataset,
+      socios: updatedSocios,
+      transactions: updatedTrx,
+      updatedAt: new Date().toISOString(),
+    };
+    setDataset(updated);
+    showToast('info', `Canal del socio "${socioName}" alternado.`);
+  };
+
   return (
     <div className="min-h-screen bg-[#070b14] text-slate-100 flex flex-col font-sans selection:bg-sky-500 selection:text-white">
       {/* Top Bar Navigation */}
@@ -338,6 +427,7 @@ export default function App() {
             onClearData={handleClearData}
             onUpdateFilter={handleUpdateFilter}
             onAddTransaction={handleAddManualTransaction}
+            onToggleSocioChannel={handleToggleSocioChannel}
           />
         )}
 
@@ -372,6 +462,17 @@ export default function App() {
           {toast.type === 'error' && <AlertCircle className="w-5 h-5 text-red-400 shrink-0" />}
           {toast.type === 'info' && <Info className="w-5 h-5 text-sky-400 shrink-0" />}
           <span className="flex-1 text-slate-200 font-medium">{toast.message}</span>
+          {toast.actionLabel && toast.onAction && (
+            <button
+              onClick={() => {
+                toast.onAction?.();
+                setToast(null);
+              }}
+              className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] whitespace-nowrap transition-colors shadow-sm"
+            >
+              {toast.actionLabel}
+            </button>
+          )}
           <button
             onClick={() => setToast(null)}
             className="text-slate-500 hover:text-white p-0.5"

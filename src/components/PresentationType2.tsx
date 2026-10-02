@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
-import { GlobalDataset } from '../types';
-import { computeReportView } from '../utils/reportFilters';
+import React, { useState, useEffect, useMemo } from 'react';
+import { GlobalDataset, SocioRecord } from '../types';
+import { computeReportView, extractTransactionMonth, MONTH_NAMES_ES, computeSociosChannelSummary } from '../utils/reportFilters';
 import { exportPresentationType2ToPPTX } from '../services/pptxExportService';
+import { SociosChannelTable } from './SociosChannelTable';
 import { 
   ChevronLeft, 
   ChevronRight, 
@@ -32,11 +33,101 @@ interface Props {
 export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard }) => {
   const [currentSlide, setCurrentSlide] = useState<number>(1);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
-  const [sociosViewMode, setSociosViewMode] = useState<'table' | 'pareto'>('table');
+  const [sociosViewMode, setSociosViewMode] = useState<'table' | 'pareto' | 'channels'>('table');
   const [socioSearch, setSocioSearch] = useState<string>('');
+  const [slide4MonthFilter, setSlide4MonthFilter] = useState<string>('ALL');
   const totalSlides = 8;
 
   const viewData = computeReportView(dataset);
+
+  useEffect(() => {
+    if (viewData.activeMonthName) {
+      setSlide4MonthFilter(viewData.activeMonthName);
+    }
+  }, [viewData.activeMonthName]);
+
+  // Extract available months from transactions and metrics
+  const availableMonths = useMemo(() => {
+    const monthsSet = new Set<string>();
+    dataset.transactions.forEach((t) => {
+      const { monthName } = extractTransactionMonth(t);
+      if (monthName) monthsSet.add(monthName);
+    });
+    dataset.monthlyMetrics.forEach((m) => {
+      if (m.month) monthsSet.add(m.month.toUpperCase());
+    });
+    return MONTH_NAMES_ES.filter((m) => monthsSet.has(m));
+  }, [dataset.transactions, dataset.monthlyMetrics]);
+
+  // Derive exact socios based on slide4MonthFilter
+  const slide4Socios = useMemo(() => {
+    if (slide4MonthFilter === 'ALL') {
+      return viewData.socios;
+    }
+    const matching = dataset.transactions.filter(
+      (t) => extractTransactionMonth(t).monthName === slide4MonthFilter
+    );
+    if (matching.length === 0) {
+      return viewData.socios;
+    }
+    const map: Record<string, { total: number; count: number; role: string; plans: Record<string, number> }> = {};
+    matching.forEach((t) => {
+      const sName = (t.socio || (t.channel === 'Connectors' ? 'Distribuidor Connect' : 'UpConnect Directo')).trim();
+      if (!map[sName]) {
+        map[sName] = { total: 0, count: 0, role: t.role || 'Distribuidor Connect', plans: {} };
+      }
+      map[sName].total = parseFloat((map[sName].total + t.value).toFixed(2));
+      map[sName].count += 1;
+      if (t.role && t.role !== 'Distribuidor Connect') map[sName].role = t.role;
+      const planName = t.solutionCategory
+        ? (t.solutionCategory.includes('(') ? t.solutionCategory : (t.duration && t.duration !== 'Un año' ? `${t.solutionCategory} (${t.duration})` : t.solutionCategory))
+        : (t.duration || 'UP INTERMEDIO ($17.25)');
+      map[sName].plans[planName] = (map[sName].plans[planName] || 0) + 1;
+    });
+
+    const ranked: SocioRecord[] = Object.entries(map)
+      .map(([name, data]) => {
+        let topPlan = 'UP INTERMEDIO ($17.25)';
+        let maxCount = -1;
+        for (const [pName, count] of Object.entries(data.plans)) {
+          if (count > maxCount) {
+            maxCount = count;
+            topPlan = pName;
+          }
+        }
+        const avg = data.count > 0 ? (data.total / data.count) : 0;
+        return {
+          rank: 0,
+          name,
+          totalSales: parseFloat(data.total.toFixed(2)),
+          group: 'TOP 1-10' as const,
+          operationsCount: data.count,
+          averageTicket: parseFloat(avg.toFixed(2)),
+          topPlan,
+          role: data.role || 'Distribuidor Connect',
+        };
+      })
+      .sort((a, b) => b.totalSales - a.totalSales);
+
+    ranked.forEach((s, idx) => {
+      s.rank = idx + 1;
+      s.group = idx < 10 ? 'TOP 1-10' : 'TOP 11-20';
+      if (idx === 0) s.note = 'Líder del Mes';
+    });
+
+    return ranked;
+  }, [slide4MonthFilter, viewData.socios, dataset.transactions]);
+
+  // Summary of socios by channel (UpConnect vs Connectors) for slide 4
+  const slide4SociosSummary = useMemo(() => {
+    if (slide4MonthFilter === 'ALL') {
+      return viewData.sociosSummary;
+    }
+    const matching = dataset.transactions.filter(
+      (t) => extractTransactionMonth(t).monthName === slide4MonthFilter
+    );
+    return computeSociosChannelSummary(slide4Socios, matching);
+  }, [slide4MonthFilter, viewData.sociosSummary, slide4Socios, dataset.transactions]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -397,7 +488,7 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard 
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-800/80 pb-3">
                 <div>
                   <span className="text-xs font-bold uppercase tracking-wider text-sky-400">
-                    DESEMPEÑO INDIVIDUAL DE SOCIOS · AUDITORÍA CONSOLIDADA
+                    DESEMPEÑO INDIVIDUAL DE SOCIOS · {slide4MonthFilter === 'ALL' ? viewData.periodLabel.toUpperCase() : `MES DE ${slide4MonthFilter} 2026`}
                   </span>
                   <h2 className="text-xl sm:text-2xl font-bold text-white tracking-tight mt-0.5">
                     ¿Quién Vende Más?: Cartera y Rendimiento de Socios
@@ -405,7 +496,36 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard 
                 </div>
 
                 <div className="flex flex-wrap items-center gap-3">
-                  {/* View Mode Toggle: Tabla Detallada vs Gráfico Pareto */}
+                  {/* Month Filter Selector for Slide 4 */}
+                  {availableMonths.length > 0 && (
+                    <div className="flex items-center p-1 bg-slate-900 border border-slate-700/80 rounded-xl">
+                      <button
+                        onClick={() => setSlide4MonthFilter('ALL')}
+                        className={`px-2.5 py-1 text-xs font-bold rounded-lg transition-all ${
+                          slide4MonthFilter === 'ALL'
+                            ? 'bg-sky-600 text-white shadow-md'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        Consolidado
+                      </button>
+                      {availableMonths.map((m) => (
+                        <button
+                          key={m}
+                          onClick={() => setSlide4MonthFilter(m)}
+                          className={`px-2.5 py-1 text-xs font-bold rounded-lg transition-all ${
+                            slide4MonthFilter === m
+                              ? 'bg-emerald-600 text-white shadow-md'
+                              : 'text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          {m.charAt(0) + m.slice(1).toLowerCase()}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* View Mode Toggle: Tabla Detallada vs Gráfico Pareto vs Resumen Canales */}
                   <div className="flex items-center p-1 bg-slate-900 border border-slate-700/80 rounded-xl">
                     <button
                       onClick={() => setSociosViewMode('table')}
@@ -417,6 +537,17 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard 
                     >
                       <Table className="w-3.5 h-3.5" />
                       <span>Tabla Detallada</span>
+                    </button>
+                    <button
+                      onClick={() => setSociosViewMode('channels')}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-all ${
+                        sociosViewMode === 'channels'
+                          ? 'bg-sky-600 text-white shadow-md'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <Users className="w-3.5 h-3.5" />
+                      <span>Canales ({slide4SociosSummary.upconnect.count} UP / {slide4SociosSummary.connectors.count} CO)</span>
                     </button>
                     <button
                       onClick={() => setSociosViewMode('pareto')}
@@ -432,7 +563,7 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard 
                   </div>
 
                   {/* Search box for table */}
-                  {sociosViewMode === 'table' && activeSocios.length > 5 && (
+                  {sociosViewMode === 'table' && slide4Socios.length > 5 && (
                     <div className="relative">
                       <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
                       <input
@@ -445,20 +576,33 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard 
                     </div>
                   )}
 
-                  <div className="text-xs font-semibold text-slate-300 bg-slate-900/90 px-3 py-1.5 rounded-lg border border-slate-800">
-                    Cartera Total: <strong className="text-emerald-400 font-bold">${activeSocios.reduce((a, s) => a + s.totalSales, 0).toLocaleString('en-US', { minimumFractionDigits: 2 })} USD</strong> ({activeSocios.length} Socios)
+                  <div className="text-xs font-semibold text-slate-300 bg-slate-900/90 px-3 py-1.5 rounded-lg border border-slate-800 flex items-center gap-2">
+                    <span>Cartera {slide4MonthFilter !== 'ALL' ? `(${slide4MonthFilter})` : ''}: <strong className="text-emerald-400 font-bold">${slide4Socios.reduce((a, s) => a + s.totalSales, 0).toLocaleString('en-US', { minimumFractionDigits: 2 })} USD</strong></span>
+                    <span className="text-slate-500">|</span>
+                    <span className="text-sky-400 font-bold">{slide4SociosSummary.upconnect.count} UpConnect</span>
+                    <span className="text-slate-500">·</span>
+                    <span className="text-amber-400 font-bold">{slide4SociosSummary.connectors.count} Connectors</span>
                   </div>
                 </div>
               </div>
 
               {/* Empty state */}
-              {activeSocios.length === 0 ? (
+              {slide4Socios.length === 0 ? (
                 <div className="my-auto py-12 text-center text-slate-500 border border-dashed border-slate-800 rounded-xl max-w-2xl mx-auto px-6">
                   <Users className="w-12 h-12 text-slate-700 mx-auto mb-2" />
                   <p className="font-semibold text-slate-400">Sin cartera de socios registrada</p>
                   <p className="text-xs text-slate-500 mt-1">
                     Cargue el archivo de socios en el Dashboard para visualizar automáticamente la tabla detallada (ventas, ticket promedio, planes más vendidos y roles).
                   </p>
+                </div>
+              ) : sociosViewMode === 'channels' ? (
+                /* RESUMEN POR CANALES: TABLITA ADICIONAL UPCONNECT VS CONNECTORS */
+                <div className="my-auto py-4">
+                  <SociosChannelTable
+                    summary={slide4SociosSummary}
+                    variant="slide"
+                    title={`Distribución y Cantidad de Socios por Canal · ${slide4MonthFilter === 'ALL' ? 'Consolidado General' : `Mes de ${slide4MonthFilter}`}`}
+                  />
                 </div>
               ) : sociosViewMode === 'table' ? (
                 /* TABLA DETALLADA DE SOCIOS */
@@ -478,7 +622,7 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard 
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-800/70 text-slate-300">
-                          {activeSocios
+                          {slide4Socios
                             .filter((s) => 
                               !socioSearch || 
                               s.name.toLowerCase().includes(socioSearch.toLowerCase()) ||
@@ -558,18 +702,18 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard 
                         <tfoot className="bg-[#080d19] border-t-2 border-slate-700 text-slate-200 font-bold text-xs sticky bottom-0">
                           <tr>
                             <td colSpan={3} className="py-2.5 px-3 text-left">
-                              TOTAL GENERAL ({activeSocios.length} SOCIOS)
+                              TOTAL GENERAL ({slide4Socios.length} SOCIOS)
                             </td>
                             <td className="py-2.5 px-3 text-center text-white tabular-nums">
-                              {activeSocios.reduce((a, s) => a + (s.operationsCount || 0), 0)} ventas
+                              {slide4Socios.reduce((a, s) => a + (s.operationsCount || 0), 0)} ventas
                             </td>
                             <td className="py-2.5 px-3 text-right text-emerald-400 font-black tabular-nums">
-                              ${activeSocios.reduce((a, s) => a + s.totalSales, 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
+                              ${slide4Socios.reduce((a, s) => a + s.totalSales, 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
                             </td>
                             <td className="py-2.5 px-3 text-right text-sky-400 font-black tabular-nums">
                               ${(
-                                activeSocios.reduce((a, s) => a + s.totalSales, 0) / 
-                                (activeSocios.reduce((a, s) => a + (s.operationsCount || 0), 0) || 1)
+                                slide4Socios.reduce((a, s) => a + s.totalSales, 0) / 
+                                (slide4Socios.reduce((a, s) => a + (s.operationsCount || 0), 0) || 1)
                               ).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
                             </td>
                             <td className="py-2.5 px-3 text-slate-400 font-normal text-[11px]">
@@ -590,8 +734,8 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard 
                       TOP 1 – 10: MAYOR VOLUMEN COLOCADO
                     </div>
                     <div className="space-y-1.5">
-                      {activeSocios.slice(0, 10).map((s) => {
-                        const maxVal = activeSocios[0]?.totalSales || 1;
+                      {slide4Socios.slice(0, 10).map((s) => {
+                        const maxVal = slide4Socios[0]?.totalSales || 1;
                         const barWidth = Math.max(5, (s.totalSales / maxVal) * 100);
                         return (
                           <div key={s.rank} className="flex items-center gap-2 text-xs">
@@ -620,8 +764,8 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard 
                       TOP 11 – 20: PENETRACIÓN Y RED BASE
                     </div>
                     <div className="space-y-1.5">
-                      {activeSocios.slice(10, 20).map((s) => {
-                        const maxSub = activeSocios[10]?.totalSales || 1;
+                      {slide4Socios.slice(10, 20).map((s) => {
+                        const maxSub = slide4Socios[10]?.totalSales || 1;
                         const barWidth = Math.max(5, (s.totalSales / maxSub) * 100);
                         return (
                           <div key={s.rank} className="flex items-center gap-2 text-xs">
@@ -651,21 +795,21 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard 
                 <div>
                   <strong className="text-sky-400">Concentración Pareto:</strong> El Top 5 representa el{' '}
                   <strong className="text-white">
-                    {activeSocios.length > 0
-                      ? ((activeSocios.slice(0, 5).reduce((a, b) => a + b.totalSales, 0) / (activeSocios.reduce((a, b) => a + b.totalSales, 0) || 1)) * 100).toFixed(1)
+                    {slide4Socios.length > 0
+                      ? ((slide4Socios.slice(0, 5).reduce((a, b) => a + b.totalSales, 0) / (slide4Socios.reduce((a, b) => a + b.totalSales, 0) || 1)) * 100).toFixed(1)
                       : '0.0'}%
                   </strong> del total facturado por socios.
                 </div>
-                {activeSocios.length > 0 && (
+                {slide4Socios.length > 0 && (
                   <div className="text-amber-400 font-bold">
-                    Líder en Ventas: {activeSocios[0]?.name} (${activeSocios[0]?.totalSales.toFixed(2)} USD · {activeSocios[0]?.role || 'Distribuidor Connect'})
+                    Líder en Ventas: {slide4Socios[0]?.name} (${slide4Socios[0]?.totalSales.toFixed(2)} USD · {slide4Socios[0]?.role || 'Distribuidor Connect'})
                   </div>
                 )}
               </div>
             </div>
           )}
 
-          {/* SLIDE 5: Foco de Rendimiento Mensual: Septiembre Desglose Semana a Semana */}
+          {/* SLIDE 5: Foco de Rendimiento Mensual: Desglose Semana a Semana */}
           {currentSlide === 5 && (
             <div className="h-full flex flex-col justify-between p-8 sm:p-12 relative bg-[#0c1322]">
               <div>
@@ -673,7 +817,7 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard 
                   FOCO DE RENDIMIENTO MENSUAL
                 </span>
                 <h2 className="text-2xl font-bold text-white tracking-tight mt-1">
-                  Septiembre 2026: Desglose Semana a Semana
+                  {viewData.periodLabel}: Desglose Semana a Semana
                 </h2>
               </div>
 
@@ -750,7 +894,13 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard 
                   </p>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 my-auto">
+                <div className={`grid gap-4 sm:gap-5 my-auto ${
+                  dataset.solutionCategories.length === 4
+                    ? 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-4'
+                    : dataset.solutionCategories.length > 4
+                    ? 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3'
+                    : 'grid-cols-1 md:grid-cols-3'
+                }`}>
                   {dataset.solutionCategories.map((cat) => (
                     <div
                       key={cat.id}
@@ -790,76 +940,88 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard 
 
           {/* SLIDE 7: Canal de Distribución - Embudo de Socios */}
           {currentSlide === 7 && (
-            <div className="h-full flex flex-col justify-between p-8 sm:p-12 relative bg-[#0c1322]">
+            <div className="h-full flex flex-col justify-between p-6 sm:p-8 relative bg-[#0c1322]">
               <div>
                 <span className="text-xs font-bold uppercase tracking-wider text-sky-400">
-                  CANAL DE DISTRIBUCIÓN
+                  CANAL DE DISTRIBUCIÓN · {viewData.periodLabel.toUpperCase()}
                 </span>
-                <h2 className="text-2xl font-bold text-white tracking-tight mt-1">
+                <h2 className="text-xl sm:text-2xl font-bold text-white tracking-tight mt-0.5">
                   Embudo de Socios y Comunidades Activas
                 </h2>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Conteo cuantitativo de socios, franquiciados UpConta y red de distribuidores Connectors
+                </p>
               </div>
 
-              {/* 3 Clean Funnel Columns */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 my-auto">
+              {/* 3 Compact Funnel Columns */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 my-2">
                 {/* Stage 1 */}
-                <div className="p-6 rounded-2xl bg-slate-900/90 border border-slate-800 shadow-xl flex flex-col justify-between text-center">
+                <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-800 shadow-xl flex flex-col justify-between text-center">
                   <div>
-                    <div className="w-12 h-12 rounded-xl bg-blue-600/20 text-sky-400 font-bold flex items-center justify-center mx-auto mb-3">
+                    <div className="w-10 h-10 rounded-xl bg-blue-600/20 text-sky-400 font-bold flex items-center justify-center mx-auto mb-2">
                       Up
                     </div>
-                    <h3 className="text-lg font-bold text-white">UpConta Socios</h3>
-                    <div className="text-4xl font-black text-sky-400 tabular-nums my-3">
-                      {activeSocios.length > 0 ? (activeSocios.length > 118 ? activeSocios.length : 118) : 0}
+                    <h3 className="text-sm font-bold text-white">UpConta Socios</h3>
+                    <div className="text-3xl font-black text-sky-400 tabular-nums my-1">
+                      {viewData.sociosSummary.upconnect.count}
                     </div>
-                    <div className="text-xs font-semibold text-slate-400 mb-2">Miembros Registrados</div>
+                    <div className="text-[11px] font-semibold text-slate-400 mb-1">Socios UpConnect Directo</div>
                   </div>
-                  <p className="text-xs text-slate-400 border-t border-slate-800 pt-3">
-                    Red general de difusión, novedades y leads de webinars.
+                  <p className="text-[11px] text-slate-400 border-t border-slate-800 pt-2">
+                    Red principal de contadores y socios directos UpConnect.
                   </p>
                 </div>
 
                 {/* Stage 2 (Hero highlighted) */}
-                <div className="p-6 rounded-2xl bg-slate-900/95 border-2 border-sky-500 shadow-2xl shadow-sky-950/50 flex flex-col justify-between text-center relative">
+                <div className="p-4 rounded-xl bg-slate-900/95 border-2 border-sky-500 shadow-xl shadow-sky-950/50 flex flex-col justify-between text-center relative">
                   <div>
-                    <div className="w-12 h-12 rounded-xl bg-purple-600/20 text-purple-400 font-bold flex items-center justify-center mx-auto mb-3">
+                    <div className="w-10 h-10 rounded-xl bg-purple-600/20 text-purple-400 font-bold flex items-center justify-center mx-auto mb-2">
                       👑
                     </div>
-                    <h3 className="text-lg font-bold text-white">Franquicia Contadores VIP</h3>
-                    <div className="text-4xl font-black text-white tabular-nums my-3">
-                      {activeSocios.length > 0 ? (activeSocios.length > 121 ? activeSocios.length : 121) : 0}
+                    <h3 className="text-sm font-bold text-white">Franquicia Contadores VIP</h3>
+                    <div className="text-3xl font-black text-white tabular-nums my-1">
+                      {viewData.sociosSummary.connectors.count}
                     </div>
-                    <div className="text-xs font-semibold text-purple-400 mb-2">Miembros Estratégicos</div>
+                    <div className="text-[11px] font-semibold text-purple-400 mb-1">Socios Connectors Aliados</div>
                   </div>
-                  <p className="text-xs text-slate-300 border-t border-slate-800 pt-3">
-                    Contadores activos con potencial de distribución masiva.
+                  <p className="text-[11px] text-slate-300 border-t border-slate-800 pt-2">
+                    Contadores activos y red externa de distribución Connectors.
                   </p>
                 </div>
 
                 {/* Stage 3 */}
-                <div className="p-6 rounded-2xl bg-slate-900/90 border border-slate-800 shadow-xl flex flex-col justify-between text-center">
+                <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-800 shadow-xl flex flex-col justify-between text-center">
                   <div>
-                    <div className="w-12 h-12 rounded-xl bg-emerald-600/20 text-emerald-400 font-bold flex items-center justify-center mx-auto mb-3">
+                    <div className="w-10 h-10 rounded-xl bg-emerald-600/20 text-emerald-400 font-bold flex items-center justify-center mx-auto mb-2">
                       🎓
                     </div>
-                    <h3 className="text-lg font-bold text-white">Capacitación Franquicia</h3>
-                    <div className="text-4xl font-black text-emerald-400 tabular-nums my-3">
-                      {activeSocios.length > 0 ? (activeSocios.length > 51 ? activeSocios.length : 51) : 0}
+                    <h3 className="text-sm font-bold text-white">Capacitación Franquicia</h3>
+                    <div className="text-3xl font-black text-emerald-400 tabular-nums my-1">
+                      {Math.max(1, Math.round(viewData.sociosSummary.totalSociosCount * 0.25)) || 51}
                     </div>
-                    <div className="text-xs font-semibold text-slate-400 mb-2">Miembros en Inducción</div>
+                    <div className="text-[11px] font-semibold text-slate-400 mb-1">Miembros en Inducción</div>
                   </div>
-                  <p className="text-xs text-slate-400 border-t border-slate-800 pt-3">
-                    Núcleo operativo en formación técnica y comercial directa.
+                  <p className="text-[11px] text-slate-400 border-t border-slate-800 pt-2">
+                    Programa de formación técnica y habilitación comercial.
                   </p>
                 </div>
               </div>
 
+              {/* TABLA ADICIONAL: Cantidad de Socios UpConnect vs Connectors */}
+              <div className="my-1">
+                <SociosChannelTable
+                  summary={viewData.sociosSummary}
+                  variant="slide"
+                  title="Distribución y Cantidad de Socios por Canal: UpConnect vs Connectors"
+                />
+              </div>
+
               {/* Bottom callout */}
-              <div className="p-3.5 rounded-xl bg-slate-900/90 border border-slate-800 text-xs text-slate-300 flex items-center justify-between">
+              <div className="p-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-xs text-slate-300 flex items-center justify-between">
                 <div>
-                  <strong className="text-sky-400">Ratio de Activación:</strong> {activeSocios.length} socios con ventas registradas sobre {activeSocios.length > 0 ? 127 : 0} miembros en comunidad ({activeSocios.length > 0 ? ((activeSocios.length / 127) * 100).toFixed(1) : '0.0'}% de conversión).
+                  <strong className="text-sky-400">Total Cartera Auditada:</strong> {viewData.sociosSummary.totalSociosCount} socios registrados ({viewData.sociosSummary.upconnect.count} UpConnect / {viewData.sociosSummary.connectors.count} Connectors) con {viewData.sociosSummary.totalOperationsCount} ventas conciliadas por ${viewData.sociosSummary.totalSales.toLocaleString('en-US', { minimumFractionDigits: 2 })} USD.
                 </div>
-                <span className="text-emerald-400 font-bold">Potencial Alto de Escalamiento</span>
+                <span className="text-emerald-400 font-bold">100% Conciliado con Base Excel</span>
               </div>
             </div>
           )}

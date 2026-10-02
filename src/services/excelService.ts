@@ -12,7 +12,238 @@ export interface ParsedExcelResult {
   unmappedColumns: string[];
   recognizedColumns: Record<string, string>;
   warnings: string[];
+  detectedMonth?: string;      // e.g. 'SEPTIEMBRE'
+  detectedMonthIndex?: number; // e.g. 9
+  detectedYear?: number;       // e.g. 2026
+  detectedCutoffDate?: string; // e.g. '20 de septiembre de 2026'
+  dateRangeStr?: string;       // e.g. '01/09/2026 al 20/09/2026'
 }
+
+export const MONTH_NAMES_ES = [
+  'ENERO', 'FEBRERO', 'MARZO', 'ABRIL', 'MAYO', 'JUNIO',
+  'JULIO', 'AGOSTO', 'SEPTIEMBRE', 'OCTUBRE', 'NOVIEMBRE', 'DICIEMBRE'
+];
+
+/**
+ * Robustly parses and identifies a month from any cell value:
+ * - Text: 'SEPTIEMBRE', 'Septiembre', 'SETIEMBRE', 'AGOSTO', 'August', etc.
+ * - Abbreviations: 'Sep', 'Sept', 'Set', 'Ago', 'Jul', etc.
+ * - Numbers: 9, '9', '09', 8, '08', etc.
+ * - Excel dates / serial numbers: extracts month and year
+ * - Strings with year: 'Septiembre 2026', '2026-09', 'Sep-26'
+ */
+export const parseMonthNameOrIndex = (rawVal: any): { monthIndex: number; monthName: string; year?: number } | null => {
+  if (rawVal === null || rawVal === undefined || rawVal === '') return null;
+
+  // If Date object
+  if (rawVal instanceof Date && !isNaN(rawVal.getTime())) {
+    const m = rawVal.getUTCMonth() + 1;
+    const y = rawVal.getUTCFullYear();
+    return { monthIndex: m, monthName: MONTH_NAMES_ES[m - 1], year: y };
+  }
+
+  // If Excel serial number (e.g. 45540)
+  if (typeof rawVal === 'number') {
+    if (rawVal >= 1 && rawVal <= 12) {
+      const m = Math.round(rawVal);
+      return { monthIndex: m, monthName: MONTH_NAMES_ES[m - 1] };
+    }
+    if (rawVal > 20000 && rawVal < 60000) {
+      try {
+        const parsed = XLSX.SSF.parse_date_code(rawVal);
+        if (parsed && parsed.m >= 1 && parsed.m <= 12) {
+          return { monthIndex: parsed.m, monthName: MONTH_NAMES_ES[parsed.m - 1], year: parsed.y };
+        }
+      } catch {
+        // fallback
+      }
+    }
+  }
+
+  const str = String(rawVal).trim();
+  if (!str) return null;
+
+  // Pure numeric string e.g. "9", "09"
+  if (/^0?[1-9]$|^1[0-2]$/.test(str)) {
+    const m = parseInt(str, 10);
+    return { monthIndex: m, monthName: MONTH_NAMES_ES[m - 1] };
+  }
+
+  // Check for year in text e.g. "Septiembre 2026" or "2026-09"
+  let detectedYear: number | undefined;
+  const yearMatch = str.match(/\b(202[0-9])\b/);
+  if (yearMatch) {
+    detectedYear = parseInt(yearMatch[1], 10);
+  }
+
+  const normalized = str
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+  const monthMap: Record<string, number> = {
+    enero: 1, january: 1, ene: 1, jan: 1,
+    febrero: 2, february: 2, feb: 2,
+    marzo: 3, march: 3, mar: 3,
+    abril: 4, april: 4, abr: 4, apr: 4,
+    mayo: 5, may: 5,
+    junio: 6, june: 6, jun: 6,
+    julio: 7, july: 7, jul: 7,
+    agosto: 8, august: 8, ago: 8, aug: 8,
+    septiembre: 9, setiembre: 9, september: 9, sep: 9, sept: 9, set: 9,
+    octubre: 10, october: 10, oct: 10,
+    noviembre: 11, november: 11, nov: 11,
+    diciembre: 12, december: 12, dic: 12, dec: 12,
+  };
+
+  for (const [key, idx] of Object.entries(monthMap)) {
+    if (normalized.includes(key)) {
+      return { monthIndex: idx, monthName: MONTH_NAMES_ES[idx - 1], year: detectedYear };
+    }
+  }
+
+  return null;
+};
+
+/**
+ * Universal flexible date parser cross-referenced with optional hintMonth and hintYear:
+ * Handles SheetJS Date objects without timezone shift, Excel serial codes,
+ * and strings in DD/MM/YYYY, MM/DD/YYYY, and YYYY-MM-DD.
+ */
+export const parseExcelDateWithMonthHint = (
+  rawDate: any, 
+  hintMonth?: number, 
+  hintYear?: number
+): { dateStr: string; day: number; month: number; year: number } => {
+  const fallbackYear = hintYear || 2026;
+  const fallbackMonth = hintMonth || 9;
+
+  if (!rawDate) {
+    return {
+      dateStr: `${fallbackYear}-${String(fallbackMonth).padStart(2, '0')}-01`,
+      day: 1,
+      month: fallbackMonth,
+      year: fallbackYear
+    };
+  }
+
+  // 1. Date object
+  if (rawDate instanceof Date && !isNaN(rawDate.getTime())) {
+    // Use UTC date to avoid timezone shift!
+    const y = rawDate.getUTCFullYear() || fallbackYear;
+    const m = rawDate.getUTCMonth() + 1;
+    const d = rawDate.getUTCDate();
+    return {
+      dateStr: `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`,
+      day: d,
+      month: m,
+      year: y
+    };
+  }
+
+  // 2. Excel numeric serial
+  if (typeof rawDate === 'number' && rawDate > 20000 && rawDate < 60000) {
+    try {
+      const parsed = XLSX.SSF.parse_date_code(rawDate);
+      if (parsed && parsed.m >= 1 && parsed.m <= 12 && parsed.d >= 1) {
+        const y = parsed.y || fallbackYear;
+        const m = parsed.m;
+        const d = parsed.d;
+        return {
+          dateStr: `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`,
+          day: d,
+          month: m,
+          year: y
+        };
+      }
+    } catch {
+      // fallback
+    }
+  }
+
+  const str = String(rawDate).trim();
+  // If YYYY-MM-DD
+  if (/^\d{4}[-/]\d{1,2}[-/]\d{1,2}$/.test(str)) {
+    const parts = str.split(/[-/]/);
+    const y = parseInt(parts[0], 10);
+    const m = parseInt(parts[1], 10);
+    const d = parseInt(parts[2], 10);
+    return {
+      dateStr: `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`,
+      day: d,
+      month: m,
+      year: y
+    };
+  }
+
+  // If DD/MM/YYYY or MM/DD/YYYY or D/M/YY
+  if (/^\d{1,2}[-/]\d{1,2}[-/]\d{2,4}$/.test(str)) {
+    const parts = str.split(/[-/]/);
+    let p1 = parseInt(parts[0], 10);
+    let p2 = parseInt(parts[1], 10);
+    let y = parseInt(parts[2], 10);
+    if (y < 100) y += 2000;
+
+    let day = p1;
+    let month = p2;
+
+    // Use hintMonth to disambiguate!
+    if (hintMonth && hintMonth >= 1 && hintMonth <= 12) {
+      if (p1 === hintMonth && p2 !== hintMonth) {
+        // p1 is month (US format MM/DD/YYYY)
+        month = p1;
+        day = p2;
+      } else if (p2 === hintMonth) {
+        // p2 is month (Latin format DD/MM/YYYY)
+        month = p2;
+        day = p1;
+      } else {
+        month = hintMonth;
+      }
+    } else {
+      // No hint: check boundaries
+      if (p1 > 12 && p2 <= 12) {
+        day = p1;
+        month = p2;
+      } else if (p2 > 12 && p1 <= 12) {
+        month = p1;
+        day = p2;
+      } else {
+        // Standard in Ecuador is DD/MM/YYYY
+        day = p1;
+        month = p2;
+      }
+    }
+
+    if (month < 1 || month > 12) month = fallbackMonth;
+    if (day < 1 || day > 31) day = 1;
+
+    return {
+      dateStr: `${y}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
+      day,
+      month,
+      year: y
+    };
+  }
+
+  // String has just a day number e.g. "15" or "20"
+  if (/^\d{1,2}$/.test(str)) {
+    const d = parseInt(str, 10);
+    return {
+      dateStr: `${fallbackYear}-${String(fallbackMonth).padStart(2, '0')}-${String(d).padStart(2, '0')}`,
+      day: d,
+      month: fallbackMonth,
+      year: fallbackYear
+    };
+  }
+
+  return {
+    dateStr: `${fallbackYear}-${String(fallbackMonth).padStart(2, '0')}-01`,
+    day: 1,
+    month: fallbackMonth,
+    year: fallbackYear
+  };
+};
 
 // Normalize strings for resilient column matching
 const cleanKey = (key: string): string => {
@@ -21,6 +252,29 @@ const cleanKey = (key: string): string => {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-z0-9]/g, '');
+};
+
+/**
+ * Clean and format client IDs (Cedula/RUC) from Excel numeric/scientific notation
+ * e.g. 1.7206E+12 -> "1720600000000" or clean numeric string
+ */
+export const formatClientId = (raw: any): string => {
+  if (raw === null || raw === undefined) return '';
+  if (typeof raw === 'number') {
+    return isNaN(raw) ? '' : Math.round(raw).toString();
+  }
+  const str = String(raw).trim();
+  if (/^[0-9.]+[eE]\+[0-9]+$/i.test(str)) {
+    try {
+      const num = Number(str);
+      if (!isNaN(num)) {
+        return Math.round(num).toString();
+      }
+    } catch {
+      // keep str
+    }
+  }
+  return str;
 };
 
 /**
@@ -85,23 +339,20 @@ export const parseFlexibleNumber = (raw: any): number => {
     // Multiple dots e.g. "1.000.000" -> thousand separators
     val = parseFloat(str.replace(/\./g, '')) || 0;
   } else if (commaCount === 1) {
-    // Single comma e.g. "29,99" or "15,00" or "15,000"
+    // Single comma e.g. "29,99" or "15,00" or "17,25"
+    // Only treat as thousand separator if integer part has 3 digits AND there is another indication of thousands (e.g. 150,000)
     const parts = str.split(',');
-    if (parts[1] === '000' && parts[0].length >= 2) {
-      // Explicit thousand e.g. "15,000" -> 15000
+    if (parts[1] === '000' && parts[0].length >= 3) {
       val = parseFloat(parts[0] + '000') || 0;
     } else {
-      // Standard comma as decimal e.g. "29,99" -> 29.99
       val = parseFloat(str.replace(',', '.')) || 0;
     }
   } else if (dotCount === 1) {
-    // Single dot e.g. "29.99" or "15.00" or "15.000"
+    // Single dot e.g. "29.99" or "15.00" or "17.25"
     const parts = str.split('.');
-    if (parts[1] === '000' && parts[0].length >= 2) {
-      // Explicit thousand e.g. "15.000" -> 15000
+    if (parts[1] === '000' && parts[0].length >= 3) {
       val = parseFloat(parts[0] + '000') || 0;
     } else {
-      // Standard dot as decimal e.g. "29.99" -> 29.99
       val = parseFloat(str) || 0;
     }
   }
@@ -275,11 +526,13 @@ export const parseExcelFile = async (
   const activeSheetName = bestSheetName;
   const worksheet = workbook.Sheets[activeSheetName];
 
-  // Recalculate worksheet range to guarantee that Column BH (col 59) and any cells beyond are included
+  // Recalculate worksheet range to guarantee that Column BH (col 59) and any cells beyond are included if needed
   if (worksheet) {
-    let maxR = 0, maxC = 59, minR = 0, minC = 0, hasCells = false;
+    let maxR = 0, maxC = 0, minR = 0, minC = 0, hasCells = false;
+    let hasBHCell = false;
     for (const cellKey of Object.keys(worksheet)) {
       if (cellKey.startsWith('!')) continue;
+      if (/^BH\d+$/i.test(cellKey)) hasBHCell = true;
       try {
         const decoded = XLSX.utils.decode_cell(cellKey);
         if (!hasCells) {
@@ -300,9 +553,13 @@ export const parseExcelFile = async (
       const origRange = worksheet['!ref']
         ? XLSX.utils.decode_range(worksheet['!ref'])
         : { s: { r: 0, c: 0 }, e: { r: 0, c: 0 } };
+
+      const shouldIncludeBH = forcedType === 'firma' || hasBHCell;
+      const effectiveMaxC = shouldIncludeBH ? Math.max(origRange.e.c, maxC, 59) : Math.max(origRange.e.c, maxC);
+
       worksheet['!ref'] = XLSX.utils.encode_range({
         s: { r: Math.min(origRange.s.r, minR), c: Math.min(origRange.s.c, minC) },
-        e: { r: Math.max(origRange.e.r, maxR), c: Math.max(origRange.e.c, maxC, 59) }
+        e: { r: Math.max(origRange.e.r, maxR), c: effectiveMaxC }
       });
     }
   }
@@ -356,8 +613,307 @@ export const parseExcelFile = async (
   const rawHeaders: string[] = (rawRows[headerRowIndex] || []).map((h: any) => String(h || '').trim());
   const dataRows = rawRows.slice(headerRowIndex + 1).filter((row) => Array.isArray(row) && row.some((c) => c !== ''));
 
-  // Detect if this is a 9-column format file for Firmas or Socios (forced or detected)
-  const is9ColFormat = forcedType === 'firma' || forcedType === 'socios' || 
+  // SPECIFIC FORMAT CHECK: 7-Column Socios Format (as shown in reference image):
+  // Column A: SOCIO | Column B: FECHA | Column C: MES | Column D: ID CLIENTE | Column E: NOMBRE CLIENTE | Column F: TIPO DE PLAN | Column G: PRECIO
+  const hasSocioCol = rawHeaders.some((h) => cleanKey(h) === 'socio' || cleanKey(h) === 'nombresocio');
+  const hasPrecioCol = rawHeaders.some((h) => cleanKey(h) === 'precio' || cleanKey(h).includes('precio'));
+  const hasPlanCol = rawHeaders.some((h) => cleanKey(h).includes('plan'));
+  const hasClienteCol = rawHeaders.some((h) => cleanKey(h).includes('cliente'));
+  const hasMesCol = rawHeaders.some((h) => cleanKey(h) === 'mes' || cleanKey(h).includes('mes'));
+
+  const isSocios7ColFormat = forcedType === 'socios' || 
+    (hasSocioCol && (hasPrecioCol || (hasPlanCol && (hasClienteCol || hasMesCol))));
+
+  if (isSocios7ColFormat) {
+    let socioCol = -1;
+    let fechaCol = -1;
+    let mesCol = -1;
+    let idCol = -1;
+    let nombreCol = -1;
+    let planCol = -1;
+    let precioCol = -1;
+    let canalCol = -1;
+    let rolCol = -1;
+
+    rawHeaders.forEach((h, idx) => {
+      const ck = cleanKey(h);
+      if ((ck === 'socio' || ck === 'nombresocio' || ck.includes('socio') || ck.includes('vendedor')) && socioCol === -1) {
+        socioCol = idx;
+      } else if ((ck === 'fecha' || ck.includes('fecha') || ck === 'date') && fechaCol === -1) {
+        fechaCol = idx;
+      } else if ((ck === 'mes' || ck.includes('mes') || ck === 'month') && mesCol === -1) {
+        mesCol = idx;
+      } else if ((ck === 'idcliente' || (ck.includes('id') && ck.includes('cliente')) || ck === 'id' || ck === 'cedula' || ck === 'ruc') && idCol === -1) {
+        idCol = idx;
+      } else if ((ck === 'nombrecliente' || (ck.includes('nombre') && ck.includes('cliente')) || (ck.includes('cliente') && !ck.includes('id'))) && nombreCol === -1) {
+        nombreCol = idx;
+      } else if ((ck === 'tipodeplan' || ck === 'tipoplan' || ck === 'plan' || ck.includes('plan') || ck.includes('producto')) && planCol === -1) {
+        planCol = idx;
+      } else if ((ck === 'precio' || ck.includes('precio') || ck === 'valor' || ck === 'monto') && precioCol === -1) {
+        precioCol = idx;
+      } else if ((ck === 'canal' || ck.includes('canal') || ck === 'channel' || ck.includes('red') || ck.includes('empresa')) && canalCol === -1) {
+        canalCol = idx;
+      } else if ((ck === 'rol' || ck.includes('rol') || ck === 'cargo' || ck === 'tiposocio') && rolCol === -1) {
+        rolCol = idx;
+      }
+    });
+
+    // Fallbacks by standard column positions (A:0, B:1, C:2, D:3, E:4, F:5, G:6)
+    if (socioCol === -1 && rawHeaders.length > 0) socioCol = 0;
+    if (fechaCol === -1 && rawHeaders.length > 1) fechaCol = 1;
+    if (mesCol === -1 && rawHeaders.length > 2) mesCol = 2;
+    if (idCol === -1 && rawHeaders.length > 3) idCol = 3;
+    if (nombreCol === -1 && rawHeaders.length > 4) nombreCol = 4;
+    if (planCol === -1 && rawHeaders.length > 5) planCol = 5;
+    if (precioCol === -1 && rawHeaders.length > 6) precioCol = 6;
+
+    const parsedTransactions: TransactionRecord[] = [];
+    const socioMap: Record<string, {
+      name: string;
+      role: string;
+      channel?: 'UpConnect' | 'Connectors';
+      totalSales: number;
+      operationsCount: number;
+      plans: Record<string, number>;
+    }> = {};
+
+    const monthCounts: Record<string, number> = {};
+    const monthIndexMap: Record<string, number> = {};
+    let minDateStr = '';
+    let maxDateStr = '';
+    let detectedYear = 2026;
+
+    dataRows.forEach((row, idx) => {
+      // 1. Socio Name
+      const rawSocio = socioCol !== -1 && row[socioCol] !== undefined ? String(row[socioCol]).trim() : '';
+      if (!rawSocio || rawSocio.toLowerCase() === 'total' || rawSocio.toLowerCase().includes('total general')) return;
+      const socioName = rawSocio;
+
+      // 2. Identify Month from Column C (MES)
+      const rawMes = mesCol !== -1 && row[mesCol] !== undefined ? row[mesCol] : '';
+      const parsedMonth = parseMonthNameOrIndex(rawMes);
+
+      // 3. Identify Date from Column B (FECHA) cross-referenced with month
+      const rawFecha = fechaCol !== -1 && row[fechaCol] !== undefined ? row[fechaCol] : '';
+      const dateInfo = parseExcelDateWithMonthHint(
+        rawFecha, 
+        parsedMonth?.monthIndex, 
+        parsedMonth?.year
+      );
+
+      // Final reconciled Month
+      const finalMonthIndex = parsedMonth?.monthIndex || dateInfo.month;
+      const finalMonthName = parsedMonth?.monthName || MONTH_NAMES_ES[finalMonthIndex - 1] || 'SEPTIEMBRE';
+      if (dateInfo.year) detectedYear = dateInfo.year;
+
+      monthCounts[finalMonthName] = (monthCounts[finalMonthName] || 0) + 1;
+      monthIndexMap[finalMonthName] = finalMonthIndex;
+
+      // Track min/max dates
+      if (!minDateStr || dateInfo.dateStr < minDateStr) minDateStr = dateInfo.dateStr;
+      if (!maxDateStr || dateInfo.dateStr > maxDateStr) maxDateStr = dateInfo.dateStr;
+
+      // 4. ID Cliente
+      const rawIdVal = idCol !== -1 ? row[idCol] : '';
+      const formattedClientId = formatClientId(rawIdVal) || `SOC-CLI-${idx + 1}`;
+
+      // 5. Nombre Cliente
+      const fullClientName = nombreCol !== -1 && row[nombreCol] ? String(row[nombreCol]).trim() : 'Cliente';
+      const nameWords = fullClientName.split(/\s+/).filter(Boolean);
+      let clientName = fullClientName;
+      let clientLastName = '';
+      if (nameWords.length >= 3) {
+        clientName = nameWords.slice(0, 2).join(' ');
+        clientLastName = nameWords.slice(2).join(' ');
+      } else if (nameWords.length === 2) {
+        clientName = nameWords[0];
+        clientLastName = nameWords[1];
+      }
+
+      // 6. Tipo de Plan
+      const fullPlanStr = planCol !== -1 && row[planCol] ? String(row[planCol]).trim() : 'UP INTERMEDIO ($17.25)';
+      let cleanPlan = fullPlanStr.replace(/\s*\(\$[0-9.,]+\)\s*/, '').trim();
+      if (!cleanPlan) cleanPlan = fullPlanStr;
+
+      // Check if price is in plan string: e.g. "UP INTERMEDIO ($17.25)" -> 17.25
+      let priceFromPlan = 0;
+      const planPriceMatch = fullPlanStr.match(/\(\$([0-9.,]+)\)/);
+      if (planPriceMatch) {
+        priceFromPlan = parseFlexibleNumber(planPriceMatch[1]);
+      }
+
+      // 7. Precio (Exact dollar value)
+      let val = 0;
+      if (precioCol !== -1 && row[precioCol] !== undefined && row[precioCol] !== null && String(row[precioCol]).trim() !== '') {
+        val = parseEcuadorianDollarValue(row[precioCol]);
+        if (val === 0) val = parseFlexibleNumber(row[precioCol]);
+      }
+      if (val === 0 && priceFromPlan > 0) {
+        val = priceFromPlan;
+      }
+      val = parseFloat(val.toFixed(2));
+
+      // Channel and Role Detection for Socio
+      let socioChannel: 'UpConnect' | 'Connectors' = 'Connectors';
+      let socioRole = 'Distribuidor Connect';
+
+      if (canalCol !== -1 && row[canalCol]) {
+        const valCanal = String(row[canalCol]).toLowerCase();
+        if (valCanal.includes('up') || valCanal.includes('direct')) {
+          socioChannel = 'UpConnect';
+          socioRole = 'UpConnect Directo';
+        } else if (valCanal.includes('connect') || valCanal.includes('distribuidor') || valCanal.includes('aliado')) {
+          socioChannel = 'Connectors';
+          socioRole = 'Distribuidor Connect';
+        }
+      }
+
+      if (rolCol !== -1 && row[rolCol]) {
+        socioRole = String(row[rolCol]).trim();
+        const roleLow = socioRole.toLowerCase();
+        if (roleLow.includes('up') || roleLow.includes('direct') || roleLow.includes('asesor') || roleLow.includes('propio')) {
+          socioChannel = 'UpConnect';
+        } else if (roleLow.includes('connect') || roleLow.includes('distribuidor') || roleLow.includes('aliado') || roleLow.includes('franquicia') || roleLow.includes('vip')) {
+          socioChannel = 'Connectors';
+        }
+      }
+
+      const sLower = socioName.toLowerCase();
+      if (sLower.includes('upconnect') || sLower.includes('directo')) {
+        socioChannel = 'UpConnect';
+        socioRole = 'UpConnect Directo';
+      } else if (sLower.includes('connectors') || sLower.includes('distribuidor')) {
+        socioChannel = 'Connectors';
+        socioRole = 'Distribuidor Connect';
+      }
+
+      // Aggregate for Socios table
+      if (!socioMap[socioName]) {
+        socioMap[socioName] = {
+          name: socioName,
+          role: socioRole,
+          channel: socioChannel,
+          totalSales: 0,
+          operationsCount: 0,
+          plans: {},
+        };
+      }
+      socioMap[socioName].totalSales = parseFloat((socioMap[socioName].totalSales + val).toFixed(2));
+      socioMap[socioName].operationsCount += 1;
+      socioMap[socioName].plans[fullPlanStr] = (socioMap[socioName].plans[fullPlanStr] || 0) + 1;
+
+      // Build Transaction record with explicit month and normalized date
+      parsedTransactions.push({
+        id: `socio-trx-${Date.now()}-${idx}`,
+        uniqueId: formattedClientId,
+        date: dateInfo.dateStr,
+        clientName,
+        clientLastName,
+        certificateStatus: 'EMITIDO',
+        duration: 'Un año',
+        value: val,
+        role: socioRole,
+        channel: socioChannel,
+        socio: socioName,
+        solutionCategory: fullPlanStr || 'UP INTERMEDIO ($17.25)',
+        month: finalMonthName,
+        monthIndex: finalMonthIndex,
+        notes: `MES: ${finalMonthName}`,
+        createdAt: new Date().toISOString(),
+        sourceFile: file.name,
+      });
+    });
+
+    // Determine primary identified month
+    let primaryMonthName = 'SEPTIEMBRE';
+    let maxMonthCount = -1;
+    for (const [mName, cnt] of Object.entries(monthCounts)) {
+      if (cnt > maxMonthCount) {
+        maxMonthCount = cnt;
+        primaryMonthName = mName;
+      }
+    }
+    const primaryMonthIndex = monthIndexMap[primaryMonthName] || 9;
+
+    // Build format date range and cutoff date string
+    let detectedCutoffDate = '20 de septiembre de 2026';
+    let dateRangeStr = '';
+    if (maxDateStr) {
+      const parts = maxDateStr.split('-');
+      if (parts.length === 3) {
+        const y = parseInt(parts[0], 10);
+        const m = parseInt(parts[1], 10);
+        const d = parseInt(parts[2], 10);
+        const mName = MONTH_NAMES_ES[m - 1]?.toLowerCase() || 'septiembre';
+        detectedCutoffDate = `${d} de ${mName} de ${y}`;
+      }
+    }
+    if (minDateStr && maxDateStr) {
+      const pMin = minDateStr.split('-');
+      const pMax = maxDateStr.split('-');
+      dateRangeStr = `${pMin[2]}/${pMin[1]}/${pMin[0]} al ${pMax[2]}/${pMax[1]}/${pMax[0]}`;
+    }
+
+    // Build SocioRecord array
+    const parsedSocios: SocioRecord[] = Object.values(socioMap).map((agg) => {
+      let topPlan = 'UP INTERMEDIO ($17.25)';
+      let maxCount = -1;
+      for (const [pName, count] of Object.entries(agg.plans)) {
+        if (count > maxCount) {
+          maxCount = count;
+          topPlan = pName;
+        }
+      }
+      const avgTicket = agg.operationsCount > 0 ? (agg.totalSales / agg.operationsCount) : agg.totalSales;
+      return {
+        rank: 0,
+        name: agg.name,
+        totalSales: parseFloat(agg.totalSales.toFixed(2)),
+        group: 'TOP 1-10',
+        operationsCount: agg.operationsCount,
+        averageTicket: parseFloat(avgTicket.toFixed(2)),
+        topPlan,
+        role: agg.role,
+        channel: agg.channel,
+      };
+    });
+
+    parsedSocios.sort((a, b) => b.totalSales - a.totalSales);
+    parsedSocios.forEach((s, idx) => {
+      s.rank = idx + 1;
+      s.group = idx < 10 ? 'TOP 1-10' : 'TOP 11-20';
+      if (idx === 0) s.note = 'Líder en Ventas';
+    });
+
+    const recognizedCols: Record<string, string> = {};
+    if (socioCol !== -1 && rawHeaders[socioCol]) recognizedCols['Socio'] = rawHeaders[socioCol];
+    if (fechaCol !== -1 && rawHeaders[fechaCol]) recognizedCols['Fecha'] = rawHeaders[fechaCol];
+    if (mesCol !== -1 && rawHeaders[mesCol]) recognizedCols['Mes'] = rawHeaders[mesCol];
+    if (idCol !== -1 && rawHeaders[idCol]) recognizedCols['ID Cliente'] = rawHeaders[idCol];
+    if (nombreCol !== -1 && rawHeaders[nombreCol]) recognizedCols['Nombre Cliente'] = rawHeaders[nombreCol];
+    if (planCol !== -1 && rawHeaders[planCol]) recognizedCols['Tipo de Plan'] = rawHeaders[planCol];
+    if (precioCol !== -1 && rawHeaders[precioCol]) recognizedCols['Precio ($)'] = rawHeaders[precioCol];
+
+    return {
+      sheetNames,
+      activeSheet: activeSheetName,
+      recognizedType: 'socios',
+      transactions: parsedTransactions,
+      socios: parsedSocios,
+      rawRowsCount: dataRows.length,
+      unmappedColumns: [],
+      recognizedColumns: recognizedCols,
+      warnings: [],
+      detectedMonth: primaryMonthName,
+      detectedMonthIndex: primaryMonthIndex,
+      detectedYear,
+      detectedCutoffDate,
+      dateRangeStr,
+    };
+  }
+
+  // Detect if this is a 9-column format file for Firmas (forced or detected)
+  const is9ColFormat = forcedType === 'firma' || 
     (rawHeaders.some((h) => cleanKey(h).includes('vendedor')) ||
      (rawHeaders.some((h) => cleanKey(h).includes('socio')) && !rawHeaders.some((h) => cleanKey(h).includes('idunico'))));
 
@@ -487,8 +1043,8 @@ export const parseExcelFile = async (
       }
     });
 
-    // If vendedorCol wasn't found but we have nombreCol in a socios context or without client last name
-    if (vendedorCol === -1 && nombreCol !== -1 && (forcedType === 'socios' || (fechaCol === -1 && !apellidoCol))) {
+    // If vendedorCol wasn't found but we have nombreCol in a context without client last name
+    if (vendedorCol === -1 && nombreCol !== -1 && (fechaCol === -1 && !apellidoCol)) {
       vendedorCol = nombreCol;
       nombreCol = -1;
     }
@@ -516,16 +1072,14 @@ export const parseExcelFile = async (
       }
     }
 
-    // Check if this file is a Socios Summary table (has quantity column, ticket, plan, or no date/client)
-    // CRITICAL: When forcedType === 'firma', this is ALWAYS individual transactions/emissions, NEVER a summary table!
-    const isSummaryTable = forcedType === 'firma'
-      ? false
-      : forcedType === 'socios' && (cantidadCol !== -1 || (ticketCol !== -1 && valorCol !== -1) || (fechaCol === -1 && apellidoCol === -1));
+    // Individual emissions (forcedType 'socios' is already handled by isSocios7ColFormat above)
+    const isSummaryTable = false;
 
     const parsedTransactions: TransactionRecord[] = [];
     const socioMap: Record<string, {
       name: string;
       role: string;
+      channel?: 'UpConnect' | 'Connectors';
       totalSales: number;
       operationsCount: number;
       averageTicket?: number;
@@ -679,6 +1233,7 @@ export const parseExcelFile = async (
           socioMap[socioName] = {
             name: socioName,
             role: effectiveRole,
+            channel: transactionChannel,
             totalSales: 0,
             operationsCount: 0,
             plans: {},
@@ -688,6 +1243,9 @@ export const parseExcelFile = async (
         socioMap[socioName].operationsCount += opQty;
         if (effectiveRole && effectiveRole !== 'Distribuidor Connect') {
           socioMap[socioName].role = effectiveRole;
+        }
+        if (transactionChannel) {
+          socioMap[socioName].channel = transactionChannel;
         }
 
         // Count plan frequency
@@ -740,6 +1298,7 @@ export const parseExcelFile = async (
         averageTicket: parseFloat(averageTicket.toFixed(2)),
         topPlan,
         role: agg.role || 'Distribuidor Connect',
+        channel: agg.channel || (agg.role && (agg.role.toLowerCase().includes('up') || agg.role.toLowerCase().includes('direct')) ? 'UpConnect' : 'Connectors'),
         note: undefined,
       };
     });
@@ -769,7 +1328,7 @@ export const parseExcelFile = async (
     return {
       sheetNames,
       activeSheet: activeSheetName,
-      recognizedType: forcedType === 'socios' ? 'socios' : 'transactions',
+      recognizedType: 'transactions',
       transactions: parsedTransactions,
       socios: parsedSocios,
       rawRowsCount: dataRows.length,
@@ -1247,127 +1806,87 @@ export const downloadTemplateFirmas = (): void => {
 
 /**
  * Downloads a template Excel specifically for Socios
- * ONLY contemplates the 9 requested columns:
- * Fecha, Nombre, Apellido, Estado, Tipo, Duración, Valor, Vendedor, Rol
+ * Exactly matching the 7 requested columns:
+ * SOCIO, FECHA, MES, ID CLIENTE, NOMBRE CLIENTE, TIPO DE PLAN, PRECIO
  */
 export const downloadTemplateSocios = (): void => {
   const wb = XLSX.utils.book_new();
 
   const sociosRows = [
     {
-      'Fecha': '2026-09-01',
-      'Nombre': 'Carlos Andrés',
-      'Apellido': 'Mendoza Reyes',
-      'Estado': 'EMITIDO',
-      'Tipo': 'Firma Electrónica',
-      'Duración': 'Un año',
-      'Valor': 29.99,
-      'Vendedor': 'Katherine Cabrera',
-      'Rol': 'Distribuidor Connect',
+      'SOCIO': 'ANDREA BURBANO',
+      'FECHA': '28/1/2026',
+      'MES': 'January 2026',
+      'ID CLIENTE': '1720601234001',
+      'NOMBRE CLIENTE': 'MARÍA MAGDALENA YANEZ',
+      'TIPO DE PLAN': 'UP INTERMEDIO ($17.25)',
+      'PRECIO': 17.25,
+      'CANAL': 'UpConnect',
     },
     {
-      'Fecha': '2026-09-02',
-      'Nombre': 'María Elena',
-      'Apellido': 'López Castro',
-      'Estado': 'EMITIDO',
-      'Tipo': 'ERP Contable',
-      'Duración': 'Dos años',
-      'Valor': 149.50,
-      'Vendedor': 'Katherine Cabrera',
-      'Rol': 'Distribuidor Connect',
+      'SOCIO': 'ANDREA BURBANO',
+      'FECHA': '31/3/2026',
+      'MES': 'March 2026',
+      'ID CLIENTE': '2300401234001',
+      'NOMBRE CLIENTE': 'JEFFERSON AVELINO INTRIAGO ROJAS',
+      'TIPO DE PLAN': 'UP INICIAL ($11.50)',
+      'PRECIO': 11.50,
+      'CANAL': 'UpConnect',
     },
     {
-      'Fecha': '2026-09-03',
-      'Nombre': 'Juan José',
-      'Apellido': 'Alvarez Vintimilla',
-      'Estado': 'EMITIDO',
-      'Tipo': 'Facturación Electrónica',
-      'Duración': '15 días',
-      'Valor': 15.00,
-      'Vendedor': 'Gabriel Endara',
-      'Rol': 'Socio Franquicia',
+      'SOCIO': 'JENNIFER BONILLA',
+      'FECHA': '16/4/2026',
+      'MES': 'April 2026',
+      'ID CLIENTE': '0919251234001',
+      'NOMBRE CLIENTE': 'Javier Barrera Barzola',
+      'TIPO DE PLAN': 'UP LIGHT ($11.50)',
+      'PRECIO': 11.50,
+      'CANAL': 'UpConnect',
     },
     {
-      'Fecha': '2026-09-05',
-      'Nombre': 'Rosa María',
-      'Apellido': 'Ortega Ortiz',
-      'Estado': 'EMITIDO',
-      'Tipo': 'Firma Electrónica',
-      'Duración': 'Cinco años',
-      'Valor': 85.00,
-      'Vendedor': 'Andrea Burbano',
-      'Rol': 'Contador VIP',
+      'SOCIO': 'BURBANO CORAL BETHSY JANNETH',
+      'FECHA': '22/4/2026',
+      'MES': 'April 2026',
+      'ID CLIENTE': '1204601234001',
+      'NOMBRE CLIENTE': 'SEGURA SEGURA JENNY CLEMENCIA',
+      'TIPO DE PLAN': 'UP ULTRA ($172.50)',
+      'PRECIO': 172.50,
+      'CANAL': 'Connectors',
     },
     {
-      'Fecha': '2026-09-08',
-      'Nombre': 'David Santiago',
-      'Apellido': 'Santander Paredes',
-      'Estado': 'EMITIDO',
-      'Tipo': 'ERP Contable',
-      'Duración': 'Un año',
-      'Valor': 120.00,
-      'Vendedor': 'Katherine Cabrera',
-      'Rol': 'Distribuidor Connect',
+      'SOCIO': 'JENNIFER BONILLA',
+      'FECHA': '27/4/2026',
+      'MES': 'September 2026',
+      'ID CLIENTE': '1705301234001',
+      'NOMBRE CLIENTE': 'Iván Fabrizio Sierra Cevallos',
+      'TIPO DE PLAN': 'UP INTERMEDIO ($17.25)',
+      'PRECIO': 17.25,
+      'CANAL': 'UpConnect',
     },
     {
-      'Fecha': '2026-09-10',
-      'Nombre': 'Gabriela Patricia',
-      'Apellido': 'González Morales',
-      'Estado': 'EMITIDO',
-      'Tipo': 'Planes de Contador',
-      'Duración': 'Un año',
-      'Valor': 95.00,
-      'Vendedor': 'Gabriel Endara',
-      'Rol': 'Socio Franquicia',
+      'SOCIO': 'GABRIEL ENDARA',
+      'FECHA': '05/5/2026',
+      'MES': 'May 2026',
+      'ID CLIENTE': '1718901234001',
+      'NOMBRE CLIENTE': 'Carlos Alberto Zambrano',
+      'TIPO DE PLAN': 'UP ULTRA ($172.50)',
+      'PRECIO': 172.50,
+      'CANAL': 'Connectors',
     },
     {
-      'Fecha': '2026-09-12',
-      'Nombre': 'Estefanía Lucía',
-      'Apellido': 'Tamay Cárdenas',
-      'Estado': 'EMITIDO',
-      'Tipo': 'Firma Electrónica',
-      'Duración': 'Dos años',
-      'Valor': 49.99,
-      'Vendedor': 'Andrea Burbano',
-      'Rol': 'Contador VIP',
-    },
-    {
-      'Fecha': '2026-09-14',
-      'Nombre': 'Lorena Paola',
-      'Apellido': 'Vera Villamar',
-      'Estado': 'EMITIDO',
-      'Tipo': 'Facturación Electrónica',
-      'Duración': 'Un año',
-      'Valor': 35.00,
-      'Vendedor': 'Andrea Perdomo',
-      'Rol': 'Distribuidor Connect',
-    },
-    {
-      'Fecha': '2026-09-15',
-      'Nombre': 'Janneth Beatriz',
-      'Apellido': 'Burbano Erazo',
-      'Estado': 'EMITIDO',
-      'Tipo': 'Firma Electrónica',
-      'Duración': 'Un año',
-      'Valor': 29.99,
-      'Vendedor': 'Katherine Cabrera',
-      'Rol': 'Distribuidor Connect',
-    },
-    {
-      'Fecha': '2026-09-18',
-      'Nombre': 'Nancy Carmita',
-      'Apellido': 'Duchi Guamán',
-      'Estado': 'EMITIDO',
-      'Tipo': 'Planes de Contador',
-      'Duración': 'Dos años',
-      'Valor': 180.00,
-      'Vendedor': 'Gabriel Endara',
-      'Rol': 'Socio Franquicia',
+      'SOCIO': 'KATHERINE CABRERA',
+      'FECHA': '14/6/2026',
+      'MES': 'June 2026',
+      'ID CLIENTE': '1715401234001',
+      'NOMBRE CLIENTE': 'Estefanía Lucía Tamay',
+      'TIPO DE PLAN': 'UP INTERMEDIO ($17.25)',
+      'PRECIO': 17.25,
+      'CANAL': 'Connectors',
     },
   ];
 
   const ws = XLSX.utils.json_to_sheet(sociosRows);
-  XLSX.utils.book_append_sheet(wb, ws, 'Plantilla Socios 9 Columnas');
+  XLSX.utils.book_append_sheet(wb, ws, 'Socios 7 Columnas');
   XLSX.writeFile(wb, 'Plantilla_Carga_Socios.xlsx');
 };
 
