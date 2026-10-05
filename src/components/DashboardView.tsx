@@ -23,13 +23,16 @@ import {
   BarChart3,
   Trash2,
   AlertTriangle,
-  Table
+  Table,
+  FileDown,
+  Loader2
 } from 'lucide-react';
 import { 
   exportDatasetToExcel, 
   downloadTemplateFirmas, 
   downloadTemplateSocios 
 } from '../services/excelService';
+import { exportCombinedPresentationsToPPTX } from '../services/pptxExportService';
 import { computeReportView, MONTH_NAMES_ES, extractTransactionMonth } from '../utils/reportFilters';
 import { SociosChannelTable } from './SociosChannelTable';
 
@@ -62,6 +65,18 @@ export const DashboardView: React.FC<Props> = ({
   const [page, setPage] = useState(1);
   const pageSize = 10;
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [isExportingPPTX, setIsExportingPPTX] = useState(false);
+
+  const handleDownloadPPTX = async () => {
+    setIsExportingPPTX(true);
+    try {
+      await exportCombinedPresentationsToPPTX(dataset);
+    } catch (e) {
+      console.error('Error generating unified PPTX from dashboard', e);
+    } finally {
+      setIsExportingPPTX(false);
+    }
+  };
 
   // Table tab: Socios vs Transactions
   const [activeTableTab, setActiveTableTab] = useState<'socios' | 'transactions'>('socios');
@@ -225,6 +240,20 @@ export const DashboardView: React.FC<Props> = ({
           >
             <Download className="w-4 h-4" />
             <span>Exportar (.xlsx)</span>
+          </button>
+
+          <button
+            onClick={handleDownloadPPTX}
+            disabled={isExportingPPTX}
+            className="flex items-center gap-2 px-3.5 py-2.5 text-xs font-bold rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white transition-all shadow-md shadow-emerald-950/40 disabled:opacity-50"
+            title="Descargar presentación unificada con los reportes 1 y 2 consolidados (.pptx)"
+          >
+            {isExportingPPTX ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <FileDown className="w-4 h-4" />
+            )}
+            <span>Descargar PPTX Unificado</span>
           </button>
         </div>
       </div>
@@ -399,9 +428,9 @@ export const DashboardView: React.FC<Props> = ({
             {viewData.totalCount}
           </div>
           <div className="mt-2 flex items-center gap-2 text-xs">
-            <span className="text-emerald-400 font-bold tabular-nums">UpConnect: {viewData.totalUpCount}</span>
+            <span className="text-emerald-400 font-bold tabular-nums">Upconnect: {viewData.totalUpCount}</span>
             <span className="text-slate-600">·</span>
-            <span className="text-amber-400 font-bold tabular-nums">Connectors: {viewData.totalCoCount}</span>
+            <span className="text-amber-400 font-bold tabular-nums">Connect: {viewData.totalCoCount}</span>
           </div>
           <div className="absolute bottom-0 left-0 right-0 h-1 bg-emerald-500" />
         </div>
@@ -418,9 +447,9 @@ export const DashboardView: React.FC<Props> = ({
             {viewData.sociosSummary.totalSociosCount}
           </div>
           <div className="mt-2 flex items-center gap-2 text-xs">
-            <span className="text-sky-400 font-bold tabular-nums">UpConnect: {viewData.sociosSummary.upconnect.count}</span>
+            <span className="text-sky-400 font-bold tabular-nums">Upconnect: {viewData.sociosSummary.upconnect.count}</span>
             <span className="text-slate-600">·</span>
-            <span className="text-amber-400 font-bold tabular-nums">Connectors: {viewData.sociosSummary.connectors.count}</span>
+            <span className="text-amber-400 font-bold tabular-nums">Connect: {viewData.sociosSummary.connectors.count}</span>
           </div>
           <div className="mt-1 text-[11px] text-slate-400">
             Ticket promedio: <strong className="text-white">${avgTicket.toFixed(2)}</strong> / firma
@@ -463,11 +492,11 @@ export const DashboardView: React.FC<Props> = ({
             <div className="flex items-center gap-4 text-xs font-semibold">
               <div className="flex items-center gap-1.5">
                 <span className="w-3 h-3 rounded bg-blue-600" />
-                <span className="text-slate-300">UpConnect</span>
+                <span className="text-slate-300">Upconnect</span>
               </div>
               <div className="flex items-center gap-1.5">
                 <span className="w-3 h-3 rounded bg-amber-500" />
-                <span className="text-slate-300">Connectors</span>
+                <span className="text-slate-300">Connect</span>
               </div>
             </div>
           </div>
@@ -562,8 +591,8 @@ export const DashboardView: React.FC<Props> = ({
                   <thead>
                     <tr className="text-slate-400 border-b border-slate-800">
                       <th className="pb-2 font-semibold">Mes</th>
-                      <th className="pb-2 font-semibold text-right">UpConnect ($)</th>
-                      <th className="pb-2 font-semibold text-right">Connectors ($)</th>
+                      <th className="pb-2 font-semibold text-right">Upconnect ($)</th>
+                      <th className="pb-2 font-semibold text-right">Distribuidor Connect ($)</th>
                       <th className="pb-2 font-semibold text-right">Total ($)</th>
                       <th className="pb-2 font-semibold text-right">Firmas</th>
                     </tr>
@@ -690,6 +719,8 @@ export const DashboardView: React.FC<Props> = ({
       {/* TABLITA ADICIONAL: Cantidad de Socios UpConnect vs Connectors */}
       <SociosChannelTable
         summary={viewData.sociosSummary}
+        monthlyMetrics={viewData.monthlyMetrics}
+        transactions={viewData.transactions.length > 0 ? viewData.transactions : dataset.transactions}
         variant="full"
         title="Distribución y Cantidad de Socios por Canal"
         subtitle={`Resumen ejecutivo de cartera en ${viewData.periodLabel}: Conteo exacto de socios, operaciones y facturación`}
@@ -816,7 +847,7 @@ export const DashboardView: React.FC<Props> = ({
                     selectedChannel === 'Connectors' ? 'bg-amber-600 text-white' : 'text-slate-400 hover:text-white'
                   }`}
                 >
-                  Connectors
+                  Connect
                 </button>
               </div>
             </div>
@@ -946,12 +977,12 @@ export const DashboardView: React.FC<Props> = ({
                                   : 'bg-amber-500/10 text-amber-300 border-amber-500/30'
                               }`}>
                                 <span className={`w-1.5 h-1.5 rounded-full ${isUp ? 'bg-sky-400' : 'bg-amber-400'}`} />
-                                <span>{isUp ? 'UpConnect' : 'Connectors'}</span>
+                                <span>{isUp ? 'Distribuidor Upconnect' : 'Distribuidor Connect'}</span>
                                 {onToggleSocioChannel && (
                                   <button
                                     onClick={() => onToggleSocioChannel(s.name)}
                                     className="ml-1 text-[9px] text-slate-400 hover:text-white underline cursor-pointer"
-                                    title="Alternar canal (UpConnect / Connectors)"
+                                    title="Alternar canal (Distribuidor Upconnect / Distribuidor Connect)"
                                   >
                                     Cambiar
                                   </button>

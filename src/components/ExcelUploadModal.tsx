@@ -108,7 +108,7 @@ export const ExcelUploadModal: React.FC<Props> = ({
   const handleConfirmImport = () => {
     if (!parsedResult) return;
 
-    if (parsedResult.recognizedType === 'socios' && parsedResult.socios) {
+    if (activeType === 'socios' || (activeType === 'auto' && parsedResult.recognizedType === 'socios' && parsedResult.socios)) {
       onApplyData({
         type: 'socios',
         socios: parsedResult.socios,
@@ -125,10 +125,10 @@ export const ExcelUploadModal: React.FC<Props> = ({
         mode: importMode,
       });
     } else {
+      // Por defecto o activeType === 'firma': Afecta exclusivamente al Reporte 1
       onApplyData({
         type: 'transactions',
         transactions: parsedResult.transactions,
-        socios: parsedResult.socios,
         detectedMonth: parsedResult.detectedMonth,
         detectedCutoffDate: parsedResult.detectedCutoffDate,
         dateRangeStr: parsedResult.dateRangeStr,
@@ -160,12 +160,12 @@ export const ExcelUploadModal: React.FC<Props> = ({
             </div>
             <div>
               <h2 className="text-base font-bold text-white">
-                {activeType === 'firma' ? 'Carga Archivo Firma (Reporte 1 · 9 Columnas)' : 'Carga Archivo Socios (Reporte 2 · Formato 7 Columnas)'}
+                {activeType === 'firma' ? 'Carga Archivo Firma (Afecta únicamente al Reporte 1)' : 'Carga Archivo Socios (Afecta únicamente al Reporte 2)'}
               </h2>
               <p className="text-xs text-slate-400">
                 {activeType === 'firma' 
-                  ? 'Alimenta la base de datos de firmas y actualiza automáticamente el Reporte 1'
-                  : 'Suma las ventas de los socios al Reporte 2 (SOCIO, FECHA, MES, ID CLIENTE, NOMBRE CLIENTE, TIPO DE PLAN, PRECIO)'}
+                  ? 'Alimenta las emisiones y cálculos de canales del Reporte 1 (no afecta la cartera del Reporte 2)'
+                  : 'Alimenta la nómina de socios, auditoría y Pareto del Reporte 2 (no altera las ventas del Reporte 1)'}
               </p>
             </div>
           </div>
@@ -190,7 +190,7 @@ export const ExcelUploadModal: React.FC<Props> = ({
             }`}
           >
             <FileSignature className="w-4 h-4" />
-            <span>Carga Archivo Firma</span>
+            <span>Carga Archivo Firma (Reporte 1)</span>
           </button>
 
           <button
@@ -203,7 +203,7 @@ export const ExcelUploadModal: React.FC<Props> = ({
             }`}
           >
             <Users2 className="w-4 h-4" />
-            <span>Carga Archivo Socios</span>
+            <span>Carga Archivo Socios (Reporte 2)</span>
           </button>
         </div>
 
@@ -251,7 +251,7 @@ export const ExcelUploadModal: React.FC<Props> = ({
               </h3>
               <p className="text-xs text-slate-400 max-w-md mx-auto mb-4">
                 {activeType === 'firma'
-                  ? 'Procesa el reporte de emisiones extrayendo el valor de cada firma directamente de la Columna BH (dólares ecuatorianos USD).'
+                  ? 'Procesa el reporte de emisiones extrayendo el valor de cada firma de la Columna BH (USD) y el canal (Distribuidor Connect / Upconnect) de la Columna CB.'
                   : 'Formato oficial de 7 columnas: SOCIO, FECHA, MES, ID CLIENTE, NOMBRE CLIENTE, TIPO DE PLAN, PRECIO. Los datos se sumarán directamente al Reporte 2.'}
               </p>
 
@@ -287,8 +287,8 @@ export const ExcelUploadModal: React.FC<Props> = ({
               <div className="mt-3.5 py-1.5 px-3 rounded-lg bg-slate-800/70 border border-slate-700/60 text-[11px] text-slate-300 inline-flex items-center gap-1.5 max-w-lg mx-auto">
                 {activeType === 'firma' ? (
                   <>
-                    <span className="text-emerald-400 font-bold">✓ Columna BH (USD):</span>
-                    <span>Los montos se toman de la <strong>Columna BH</strong> en dólares ecuatorianos (soporta <code>$</code>, decimales con punto y con coma).</span>
+                    <span className="text-emerald-400 font-bold">✓ Columna BH y CB:</span>
+                    <span>Montos extraídos de la <strong>Columna BH</strong> (USD) y clasificación automática de <strong>Distribuidor Connect vs Upconnect</strong> de la <strong>Columna CB</strong>.</span>
                   </>
                 ) : (
                   <>

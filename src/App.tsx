@@ -20,6 +20,7 @@ import {
   formatSpanishDateCutoff
 } from './utils/reportFilters';
 import { CheckCircle2, AlertCircle, Info, X } from 'lucide-react';
+import { exportCombinedPresentationsToPPTX } from './services/pptxExportService';
 
 const DATASET_STORAGE_KEY = 'upconnect_global_dataset_v2';
 
@@ -112,6 +113,7 @@ export default function App() {
     let updatedDataset: GlobalDataset = { ...dataset, updatedAt: new Date().toISOString() };
 
     if (result.type === 'transactions' && result.transactions) {
+      // REPORTE 1: Se actualiza EXCLUSIVAMENTE con el archivo de firmas
       const newTrxList = result.transactions;
       let finalTrx: TransactionRecord[] = [];
 
@@ -119,10 +121,10 @@ export default function App() {
         const existingIds = new Set(dataset.transactions.map((t) => t.uniqueId));
         const filteredNew = newTrxList.filter((t) => !existingIds.has(t.uniqueId));
         finalTrx = [...filteredNew, ...dataset.transactions];
-        showToast('success', `Se añadieron ${filteredNew.length} nuevas emisiones de firmas al reporte.`);
+        showToast('success', `Reporte 1: Se añadieron ${filteredNew.length} nuevas emisiones de firmas.`);
       } else {
         finalTrx = newTrxList;
-        showToast('success', `Se reemplazó el conjunto con ${newTrxList.length} emisiones de firmas.`);
+        showToast('success', `Reporte 1: Se cargaron ${newTrxList.length} emisiones de firmas.`);
       }
 
       updatedDataset.transactions = finalTrx;
@@ -130,58 +132,10 @@ export default function App() {
       updatedDataset.portfolioDurations = derivePortfolioDurationsFromTransactions(finalTrx);
       const weekly = deriveWeeklyBreakdownFromTransactions(finalTrx);
       updatedDataset.weeklyBreakdownType1 = weekly.type1;
-      updatedDataset.weeklyBreakdownType2 = weekly.type2;
       updatedDataset.solutionCategories = deriveSolutionCategoriesFromTransactions(finalTrx);
       updatedDataset.commercialCross = deriveCommercialCrossFromTransactions(finalTrx);
 
-      // Reconcile socios directly from final transactions to prevent double-counting
-      const socioMap: Record<string, { total: number; count: number; role: string; plans: Record<string, number> }> = {};
-      finalTrx.forEach((t) => {
-        const sName = (t.socio || (t.channel === 'Connectors' ? 'Distribuidor Connect' : 'UpConnect Directo')).trim();
-        if (!socioMap[sName]) {
-          socioMap[sName] = { total: 0, count: 0, role: t.role || 'Distribuidor Connect', plans: {} };
-        }
-        socioMap[sName].total = parseFloat((socioMap[sName].total + t.value).toFixed(2));
-        socioMap[sName].count += 1;
-        if (t.role && t.role !== 'Distribuidor Connect') socioMap[sName].role = t.role;
-        const planName = t.solutionCategory ? `${t.solutionCategory} (${t.duration})` : (t.duration || 'Plan Estándar');
-        socioMap[sName].plans[planName] = (socioMap[sName].plans[planName] || 0) + 1;
-      });
-
-      const ranked: SocioRecord[] = Object.entries(socioMap)
-        .map(([name, data]) => {
-          let topPlan = 'Firma Electrónica (1 año)';
-          let maxCount = -1;
-          for (const [pName, count] of Object.entries(data.plans)) {
-            if (count > maxCount) {
-              maxCount = count;
-              topPlan = pName;
-            }
-          }
-          const averageTicket = data.count > 0 ? (data.total / data.count) : 0;
-          return {
-            rank: 0,
-            name,
-            totalSales: parseFloat(data.total.toFixed(2)),
-            group: 'TOP 1-10' as const,
-            operationsCount: data.count,
-            averageTicket: parseFloat(averageTicket.toFixed(2)),
-            topPlan,
-            role: data.role || 'Distribuidor Connect',
-            note: undefined,
-          };
-        })
-        .sort((a, b) => b.totalSales - a.totalSales);
-
-      ranked.forEach((s, idx) => {
-        s.rank = idx + 1;
-        s.group = idx < 10 ? 'TOP 1-10' : 'TOP 11-20';
-        if (idx === 0) s.note = 'Líder en Ventas';
-      });
-
-      if (ranked.length > 0) {
-        updatedDataset.socios = ranked;
-      }
+      // NO se modifica dataset.socios: el Reporte 2 permanece intacto con su archivo de socios
 
       if (result.detectedCutoffDate) {
         updatedDataset.cutoffDate = result.detectedCutoffDate;
@@ -202,115 +156,57 @@ export default function App() {
         };
       }
     } else if (result.type === 'socios') {
-      let finalTrx: TransactionRecord[] = [];
+      // REPORTE 2: Se actualiza EXCLUSIVAMENTE con el archivo de socios
+      let incomingSocios = result.socios || [];
 
-      if (result.transactions && result.transactions.length > 0) {
+      // Si el archivo de socios trajo registros de socios directamente
+      if (incomingSocios.length > 0) {
         if (result.mode === 'append') {
-          const existingIds = new Set(dataset.transactions.map((t) => t.uniqueId));
-          const filteredNew = result.transactions.filter((t) => !existingIds.has(t.uniqueId));
-          finalTrx = [...filteredNew, ...dataset.transactions];
-        } else {
-          finalTrx = result.transactions;
-        }
-        updatedDataset.transactions = finalTrx;
-        updatedDataset.monthlyMetrics = deriveMonthlyMetricsFromTransactions(finalTrx);
-        updatedDataset.portfolioDurations = derivePortfolioDurationsFromTransactions(finalTrx);
-        const weekly = deriveWeeklyBreakdownFromTransactions(finalTrx);
-        updatedDataset.weeklyBreakdownType1 = weekly.type1;
-        updatedDataset.weeklyBreakdownType2 = weekly.type2;
-        updatedDataset.solutionCategories = deriveSolutionCategoriesFromTransactions(finalTrx);
-        updatedDataset.commercialCross = deriveCommercialCrossFromTransactions(finalTrx);
-
-        // Derive socios strictly from final transactions to guarantee 100% exact math per month
-        const socioMap: Record<string, {
-          total: number;
-          count: number;
-          role: string;
-          channel?: 'UpConnect' | 'Connectors';
-          upOps: number;
-          coOps: number;
-          plans: Record<string, number>;
-        }> = {};
-
-        finalTrx.forEach((t) => {
-          const sName = (t.socio || (t.channel === 'Connectors' ? 'Distribuidor Connect' : 'UpConnect Directo')).trim();
-          if (!socioMap[sName]) {
-            socioMap[sName] = { 
-              total: 0, 
-              count: 0, 
-              role: t.role || (t.channel === 'Connectors' ? 'Distribuidor Connect' : 'UpConnect Directo'), 
-              channel: t.channel,
-              upOps: 0,
-              coOps: 0,
-              plans: {} 
-            };
-          }
-          socioMap[sName].total = parseFloat((socioMap[sName].total + t.value).toFixed(2));
-          socioMap[sName].count += 1;
-          if (t.channel === 'Connectors') socioMap[sName].coOps += 1;
-          else socioMap[sName].upOps += 1;
-
-          if (t.role && t.role !== 'Distribuidor Connect' && t.role !== 'UpConnect Directo') socioMap[sName].role = t.role;
-          const planName = t.solutionCategory
-            ? (t.solutionCategory.includes('(') ? t.solutionCategory : (t.duration && t.duration !== 'Un año' ? `${t.solutionCategory} (${t.duration})` : t.solutionCategory))
-            : (t.duration || 'UP INTERMEDIO ($17.25)');
-          socioMap[sName].plans[planName] = (socioMap[sName].plans[planName] || 0) + 1;
-        });
-
-        const ranked: SocioRecord[] = Object.entries(socioMap)
-          .map(([name, data]) => {
-            let topPlan = 'UP INTERMEDIO ($17.25)';
-            let maxCount = -1;
-            for (const [pName, count] of Object.entries(data.plans)) {
-              if (count > maxCount) {
-                maxCount = count;
-                topPlan = pName;
-              }
+          const existingMap = new Map(dataset.socios.map((s) => [s.name.toLowerCase().trim(), { ...s }]));
+          incomingSocios.forEach((newS) => {
+            const key = newS.name.toLowerCase().trim();
+            if (existingMap.has(key)) {
+              const existing = existingMap.get(key)!;
+              const combinedOps = (existing.operationsCount || 0) + (newS.operationsCount || 0);
+              const combinedSales = parseFloat(((existing.totalSales || 0) + (newS.totalSales || 0)).toFixed(2));
+              existingMap.set(key, {
+                ...existing,
+                totalSales: combinedSales,
+                operationsCount: combinedOps,
+                averageTicket: combinedOps > 0 
+                  ? parseFloat((combinedSales / combinedOps).toFixed(2)) 
+                  : combinedSales,
+              });
+            } else {
+              existingMap.set(key, { ...newS });
             }
-            const averageTicket = data.count > 0 ? (data.total / data.count) : 0;
-            const channel: 'UpConnect' | 'Connectors' = data.coOps > data.upOps 
-              ? 'Connectors' 
-              : data.upOps > data.coOps 
-              ? 'UpConnect' 
-              : (data.channel || 'Connectors');
-            const role = data.role || (channel === 'Connectors' ? 'Distribuidor Connect' : 'UpConnect Directo');
-
-            return {
-              rank: 0,
-              name,
-              totalSales: parseFloat(data.total.toFixed(2)),
-              group: 'TOP 1-10' as const,
-              operationsCount: data.count,
-              averageTicket: parseFloat(averageTicket.toFixed(2)),
-              topPlan,
-              role,
-              channel,
-              note: undefined,
-            };
-          })
-          .sort((a, b) => b.totalSales - a.totalSales);
-
-        ranked.forEach((s, idx) => {
-          s.rank = idx + 1;
-          s.group = idx < 10 ? 'TOP 1-10' : 'TOP 11-20';
-          if (idx === 0) s.note = 'Líder en Ventas';
-        });
-
-        updatedDataset.socios = ranked;
-      } else if (result.socios && result.socios.length > 0) {
-        updatedDataset.socios = result.socios;
+          });
+          const merged = Array.from(existingMap.values()).sort((a, b) => b.totalSales - a.totalSales);
+          merged.forEach((s, idx) => {
+            s.rank = idx + 1;
+            s.group = idx < 10 ? 'TOP 1-10' : 'TOP 11-20';
+            if (idx === 0) s.note = 'Líder en Ventas';
+          });
+          updatedDataset.socios = merged;
+          showToast('success', `Reporte 2: Se anexaron ${incomingSocios.length} registros a la cartera de socios.`);
+        } else {
+          updatedDataset.socios = incomingSocios;
+          showToast('success', `Reporte 2: Se cargaron ${incomingSocios.length} socios en la cartera.`);
+        }
       }
+
+      // Si el archivo trajo liquidaciones semanales para el Reporte 2
+      if (result.transactions && result.transactions.length > 0) {
+        const weekly = deriveWeeklyBreakdownFromTransactions(result.transactions, result.detectedMonth);
+        if (weekly.type2 && weekly.type2.length > 0) {
+          updatedDataset.weeklyBreakdownType2 = weekly.type2;
+        }
+      }
+
+      // NO se modifican transactions ni monthlyMetrics de Reporte 1: Reporte 1 permanece intacto
 
       if (result.detectedCutoffDate) {
         updatedDataset.cutoffDate = result.detectedCutoffDate;
-      } else if (finalTrx.length > 0) {
-        const validDates = finalTrx
-          .map((t) => new Date(t.date))
-          .filter((d) => !isNaN(d.getTime()))
-          .sort((a, b) => b.getTime() - a.getTime());
-        if (validDates.length > 0) {
-          updatedDataset.cutoffDate = formatSpanishDateCutoff(validDates[0]);
-        }
       }
 
       // Automatically focus on the identified month!
@@ -323,7 +219,7 @@ export default function App() {
 
       showToast(
         'success',
-        `Se sincronizó el Reporte 2 con las ventas de socios del mes de ${result.detectedMonth || 'SEPTIEMBRE'} (${result.transactions?.length || 0} emisiones conciliadas).`,
+        `Se actualizó el Reporte 2 con las ventas de socios (${incomingSocios.length} socios registrados).`,
         'Ver Reporte 2',
         () => setCurrentView('presentation2')
       );
@@ -409,12 +305,44 @@ export default function App() {
     showToast('info', `Canal del socio "${socioName}" alternado.`);
   };
 
+  const [isExportingCombinedPPTX, setIsExportingCombinedPPTX] = useState<boolean>(false);
+
+  const handleDownloadCombinedPPTX = async () => {
+    setIsExportingCombinedPPTX(true);
+    try {
+      await exportCombinedPresentationsToPPTX(dataset);
+      showToast('success', 'Presentación consolidada de los 2 reportes descargada con éxito (.pptx)');
+    } catch (e: any) {
+      console.error('Error generating combined PPTX', e);
+      showToast('error', 'Error al generar la presentación combinada PowerPoint.');
+    } finally {
+      setIsExportingCombinedPPTX(false);
+    }
+  };
+
+  const handleUpdateDataset = (updates: Partial<GlobalDataset>) => {
+    const updated: GlobalDataset = {
+      ...dataset,
+      ...updates,
+      updatedAt: new Date().toISOString(),
+    };
+    setDataset(updated);
+    try {
+      localStorage.setItem(DATASET_STORAGE_KEY, JSON.stringify(updated));
+    } catch (e) {
+      console.error('Error saving updated dataset to localStorage', e);
+    }
+    showToast('success', 'Cambios guardados exitosamente.');
+  };
+
   return (
     <div className="min-h-screen bg-[#070b14] text-slate-100 flex flex-col font-sans selection:bg-sky-500 selection:text-white">
       {/* Top Bar Navigation */}
       <Navigation
         currentView={currentView}
         onSelectView={setCurrentView}
+        onDownloadCombinedPPTX={handleDownloadCombinedPPTX}
+        isExportingPPTX={isExportingCombinedPPTX}
       />
 
       {/* Main View Port */}
@@ -435,6 +363,7 @@ export default function App() {
           <PresentationType1 
             dataset={dataset}
             onBackToDashboard={() => setCurrentView('dashboard')}
+            onUpdateDataset={handleUpdateDataset}
           />
         )}
 
@@ -442,6 +371,7 @@ export default function App() {
           <PresentationType2 
             dataset={dataset}
             onBackToDashboard={() => setCurrentView('dashboard')}
+            onUpdateDataset={handleUpdateDataset}
           />
         )}
       </main>

@@ -114,10 +114,20 @@ export interface ReportTimeFilter {
 }
 
 export interface GlobalDataset {
+  // Reporte 1: Archivo de Firmas
   transactions: TransactionRecord[];
   monthlyMetrics: MonthlyMetric[];
-  socios: SocioRecord[];
   weeklyBreakdownType1: WeeklySalesBreakdown[];
+  portfolioDurations: PortfolioDuration[];
+  firmaTransactions?: TransactionRecord[];
+  firmaSocios?: SocioRecord[];
+  cutoffDateFirma?: string;
+
+  // Reporte 2: Archivo de Socios
+  socios: SocioRecord[];
+  sistemasTransactions?: TransactionRecord[];
+  sistemasSocios?: SocioRecord[];
+  sistemasMonthlyMetrics?: MonthlyMetric[];
   weeklyBreakdownType2: {
     weekName: string;
     dateRange: string;
@@ -126,11 +136,16 @@ export interface GlobalDataset {
     description: string;
     operationsCount?: number;
   }[];
-  portfolioDurations: PortfolioDuration[];
   solutionCategories: SolutionCategory[];
-  communities: CommunityMetric[];
   commercialCross: CommercialCrossPhase;
+  cutoffDateSocios?: string;
+
+  // General / Settings
+  communities: CommunityMetric[];
   cutoffDate: string;
   reportFilter?: ReportTimeFilter;
   updatedAt: string;
+  customOverrides?: Record<string, string | number>;
+  customSlideOrder1?: string[];
+  customSlideOrder2?: string[];
 }

@@ -3,12 +3,13 @@ import { GlobalDataset } from '../types';
 import { computeReportView } from '../utils/reportFilters';
 import { exportPresentationType1ToPPTX } from '../services/pptxExportService';
 import { SociosChannelTable } from './SociosChannelTable';
+import { ReorderSlidesModal } from './ReorderSlidesModal';
+import { SlideEditorModal } from './SlideEditorModal';
 import { 
   ChevronLeft, 
   ChevronRight, 
   Maximize2, 
   Minimize2, 
-  Printer, 
   TrendingUp, 
   Users, 
   DollarSign, 
@@ -35,6 +36,7 @@ import {
 interface Props {
   dataset: GlobalDataset;
   onBackToDashboard?: () => void;
+  onUpdateDataset?: (updated: Partial<GlobalDataset>) => void;
 }
 
 interface TopProductItem {
@@ -46,12 +48,35 @@ interface TopProductItem {
   label?: string;
 }
 
-export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard }) => {
+export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard, onUpdateDataset }) => {
   const [currentSlide, setCurrentSlide] = useState<number>(1);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [sociosViewMode, setSociosViewMode] = useState<'table' | 'ranking' | 'channels'>('table');
   const [socioSearch, setSocioSearch] = useState<string>('');
   const [isExportingPPTX, setIsExportingPPTX] = useState<boolean>(false);
+
+  // Slide Reordering & Edit Mode state
+  const [isReorderModalOpen, setIsReorderModalOpen] = useState<boolean>(false);
+  const [isEditorModalOpen, setIsEditorModalOpen] = useState<boolean>(false);
+  const [isEditMode, setIsEditMode] = useState<boolean>(false);
+  const [editValues, setEditValues] = useState<Record<string, string | number>>(dataset.customOverrides || {});
+
+  useEffect(() => {
+    setEditValues(dataset.customOverrides || {});
+  }, [dataset.customOverrides]);
+
+  const handleSaveAllChanges = () => {
+    if (onUpdateDataset) {
+      onUpdateDataset({ customOverrides: editValues });
+    }
+    setIsEditMode(false);
+    setIsEditorModalOpen(false);
+  };
+
+  const handleCancelEdit = () => {
+    setEditValues(dataset.customOverrides || {});
+    setIsEditMode(false);
+  };
 
   const viewData = computeReportView(dataset);
   const activeSocios = viewData.socios;
@@ -65,18 +90,48 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard 
     title: string;
   }
 
-  const activeSlides: SlideConfig[] = [
+  const baseSlides: SlideConfig[] = [
     { id: 'cover', title: 'Portada' },
     { id: 'balance', title: 'Balance General' },
     { id: 'monthly', title: 'Evolución Comparativa' },
     { id: 'channels', title: 'Resumen por Canal' },
     ...(showWeeklySlide ? [{ id: 'weekly' as const, title: 'Evolución Semana a Semana' }] : []),
-    { id: 'products', title: 'Top 5 Productos más Vendidos' },
+    { id: 'products', title: 'Top 6 Productos más Vendidos' },
     { id: 'communities', title: 'Comunidades y Franquiciados' },
     { id: 'socios', title: 'Rendimiento de Socios' },
   ];
 
+  // Reorder slides dynamically according to dataset.customSlideOrder1
+  const activeSlides: SlideConfig[] = (() => {
+    if (!dataset.customSlideOrder1 || dataset.customSlideOrder1.length === 0) {
+      return baseSlides;
+    }
+    const order = dataset.customSlideOrder1;
+    return [...baseSlides].sort((a, b) => {
+      const idxA = order.indexOf(a.id);
+      const idxB = order.indexOf(b.id);
+      if (idxA === -1 && idxB === -1) return 0;
+      if (idxA === -1) return 1;
+      if (idxB === -1) return -1;
+      return idxA - idxB;
+    });
+  })();
+
   const totalSlides = activeSlides.length;
+
+  const handleMoveSlide = (fromPos: number, toPos: number) => {
+    const fromIndex = fromPos - 1;
+    const toIndex = Math.max(0, Math.min(activeSlides.length - 1, toPos - 1));
+    if (fromIndex === toIndex || fromIndex < 0 || fromIndex >= activeSlides.length) return;
+    const newSlides = [...activeSlides];
+    const [moved] = newSlides.splice(fromIndex, 1);
+    newSlides.splice(toIndex, 0, moved);
+    const newOrder = newSlides.map((s) => s.id);
+    if (onUpdateDataset) {
+      onUpdateDataset({ customSlideOrder1: newOrder });
+    }
+    setCurrentSlide(toPos);
+  };
 
   // Clamp currentSlide if slide count changes
   useEffect(() => {
@@ -127,10 +182,6 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard 
     customCommunities.franquiciaVIP !== undefined ||
     customCommunities.formacionComercial !== undefined;
 
-  const handlePrint = () => {
-    window.print();
-  };
-
   const handleExportPPTX = async () => {
     try {
       setIsExportingPPTX(true);
@@ -156,17 +207,21 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard 
     ? viewData.monthlyMetrics
     : dataset.monthlyMetrics;
 
-  // Helper: Compute Top 5 Products per channel
-  const computeTop5Products = (channel: 'UpConnect' | 'Connectors'): TopProductItem[] => {
+  // Helper: Compute Top 6 Products per channel
+  const computeTop6Products = (channel: 'UpConnect' | 'Connectors'): TopProductItem[] => {
     const map = new Map<string, { name: string; count: number; sales: number }>();
 
-    // 1. From transactions
+    // 1. From transactions (tomando tipo columna AI y vigencia columna AK)
     viewData.transactions
       .filter((t) => t.channel === channel)
       .forEach((t) => {
-        let prodName = t.solutionCategory ? t.solutionCategory.trim() : 'Firma Electrónica';
-        if (t.duration && !prodName.toLowerCase().includes(t.duration.toLowerCase())) {
-          prodName = `${prodName} (${t.duration})`;
+        let dur = (t.duration || '1 año').trim();
+        if (!dur.toLowerCase().includes('año') && !dur.toLowerCase().includes('día') && !dur.toLowerCase().includes('mes')) {
+          dur = `${dur} año${dur === '1' ? '' : 's'}`;
+        }
+        let prodName = `Firma de ${dur}`;
+        if (t.solutionCategory && !t.solutionCategory.toLowerCase().includes('firma') && t.solutionCategory !== 'Firma Electrónica') {
+          prodName = `${t.solutionCategory} (Firma de ${dur})`;
         }
         const key = prodName;
         if (!map.has(key)) {
@@ -183,7 +238,7 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard 
         .filter((p) => p.channel === channel)
         .forEach((p) => {
           map.set(p.duration, {
-            name: `Firma Electrónica (${p.duration})`,
+            name: `Firma de ${p.duration}`,
             count: p.count,
             sales: p.count * 15,
           });
@@ -193,7 +248,7 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard 
     const list = Array.from(map.values()).sort((a, b) => b.count - a.count || b.sales - a.sales);
     const channelTotalCount = list.reduce((a, b) => a + b.count, 0) || 1;
 
-    return list.slice(0, 5).map((item, idx) => ({
+    return list.slice(0, 6).map((item, idx) => ({
       rank: idx + 1,
       name: item.name,
       count: item.count,
@@ -203,8 +258,8 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard 
     }));
   };
 
-  const topUpProducts = computeTop5Products('UpConnect');
-  const topCoProducts = computeTop5Products('Connectors');
+  const topUpProducts = computeTop6Products('UpConnect');
+  const topCoProducts = computeTop6Products('Connectors');
 
   // Jump helper for socios slide
   const jumpToSociosSlide = () => {
@@ -228,22 +283,40 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard 
                 <span>{viewData.periodLabel.toUpperCase()}</span>
               </div>
 
-              <h1 className="text-3xl sm:text-5xl font-extrabold tracking-tight text-white leading-tight">
-                {viewData.titleReport1}
-              </h1>
+              {isEditMode ? (
+                <input
+                  type="text"
+                  value={String(editValues['titleReport1'] !== undefined ? editValues['titleReport1'] : (editValues['r1_cover_title'] !== undefined ? editValues['r1_cover_title'] : viewData.titleReport1))}
+                  onChange={(e) => setEditValues({ ...editValues, titleReport1: e.target.value, r1_cover_title: e.target.value })}
+                  className="w-full text-2xl sm:text-4xl font-extrabold text-white bg-slate-900 border border-emerald-500 rounded px-2 py-1 focus:outline-none"
+                />
+              ) : (
+                <h1 className="text-3xl sm:text-5xl font-extrabold tracking-tight text-white leading-tight">
+                  {viewData.titleReport1}
+                </h1>
+              )}
 
-              <p className="text-slate-400 text-sm sm:text-base max-w-2xl pt-1 leading-relaxed">
-                Auditoría comparativa de emisión de certificados, rendimiento de canales directos y red externa de distribuidores con corte al {viewData.subtitleDate}.
-              </p>
+              {isEditMode ? (
+                <input
+                  type="text"
+                  value={String(editValues['subtitleDate'] !== undefined ? editValues['subtitleDate'] : (editValues['r1_cover_subtitle'] !== undefined ? editValues['r1_cover_subtitle'] : viewData.subtitleDate))}
+                  onChange={(e) => setEditValues({ ...editValues, subtitleDate: e.target.value, r1_cover_subtitle: e.target.value })}
+                  className="w-full text-sm text-slate-300 bg-slate-900 border border-emerald-500 rounded px-2 py-1 mt-1 focus:outline-none"
+                />
+              ) : (
+                <p className="text-slate-400 text-sm sm:text-base max-w-2xl pt-1 leading-relaxed">
+                  Auditoría comparativa de emisión de certificados, rendimiento de canales directos y red externa de distribuidores con corte al {viewData.subtitleDate}.
+                </p>
+              )}
 
               <div className="pt-6 flex flex-wrap items-center gap-6 text-xs text-slate-400">
                 <div className="flex items-center gap-2">
                   <span className="w-2.5 h-2.5 rounded-full bg-sky-400" />
-                  <span>Canal Directo: <strong>UpConnect (UP)</strong></span>
+                  <span>Canal Directo: <strong>Distribuidor Upconnect</strong></span>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="w-2.5 h-2.5 rounded-full bg-amber-400" />
-                  <span>Red Externa: <strong>Connectors (CO)</strong></span>
+                  <span>Red Externa: <strong>Distribuidor Connect</strong></span>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="w-2.5 h-2.5 rounded-full bg-emerald-400" />
@@ -290,9 +363,9 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard 
               </div>
             </div>
 
-            {/* Two Big Channel Comparison Cards */}
+            {/* Two Big Channel Comparison Cards: Distribuidor Connect y Upconnect */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 my-auto">
-              {/* UpConnect Card */}
+              {/* Upconnect Card */}
               <div className="p-6 rounded-2xl bg-slate-900/80 border border-slate-800 shadow-xl relative overflow-hidden flex flex-col justify-between">
                 <div className="flex items-center justify-between pb-3 border-b border-slate-800">
                   <div className="flex items-center gap-2.5">
@@ -300,7 +373,7 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard 
                       <Zap className="w-4 h-4" />
                     </div>
                     <div>
-                      <h3 className="text-base font-bold text-white">UpConnect (UP)</h3>
+                      <h3 className="text-base font-bold text-white">Distribuidor Upconnect</h3>
                       <p className="text-[11px] text-slate-400">Canal Propio / Directo</p>
                     </div>
                   </div>
@@ -312,15 +385,35 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard 
                 <div className="grid grid-cols-3 gap-3 py-5 text-center">
                   <div>
                     <div className="text-xs text-slate-400">Ventas Totales</div>
-                    <div className="text-lg sm:text-xl font-black text-sky-400 tabular-nums mt-1">
-                      ${totalUpSales.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </div>
+                    {isEditMode ? (
+                      <input
+                        type="number"
+                        step="any"
+                        value={Number(editValues['totalUpSales'] !== undefined ? editValues['totalUpSales'] : totalUpSales)}
+                        onChange={(e) => setEditValues({ ...editValues, totalUpSales: parseFloat(e.target.value) || 0, r1_kpi_up_sales: parseFloat(e.target.value) || 0 })}
+                        className="w-full text-base sm:text-lg font-black text-sky-400 bg-slate-950 border border-emerald-500 rounded px-1.5 py-0.5 mt-1 text-center focus:outline-none"
+                      />
+                    ) : (
+                      <div className="text-lg sm:text-xl font-black text-sky-400 tabular-nums mt-1">
+                        ${totalUpSales.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </div>
+                    )}
                   </div>
                   <div>
                     <div className="text-xs text-slate-400">Firmas Emitidas</div>
-                    <div className="text-lg sm:text-xl font-black text-white tabular-nums mt-1">
-                      {totalUpCount}
-                    </div>
+                    {isEditMode ? (
+                      <input
+                        type="number"
+                        step="1"
+                        value={Number(editValues['totalUpCount'] !== undefined ? editValues['totalUpCount'] : totalUpCount)}
+                        onChange={(e) => setEditValues({ ...editValues, totalUpCount: parseInt(e.target.value, 10) || 0, r1_kpi_up_count: parseInt(e.target.value, 10) || 0 })}
+                        className="w-full text-base sm:text-lg font-black text-white bg-slate-950 border border-emerald-500 rounded px-1.5 py-0.5 mt-1 text-center focus:outline-none"
+                      />
+                    ) : (
+                      <div className="text-lg sm:text-xl font-black text-white tabular-nums mt-1">
+                        {totalUpCount}
+                      </div>
+                    )}
                     <div className="text-[10px] text-slate-500">({totalUpCount} en el periodo)</div>
                   </div>
                   <div>
@@ -341,7 +434,7 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard 
                 <div className="absolute bottom-0 left-0 right-0 h-1 bg-blue-500" />
               </div>
 
-              {/* Connectors Card */}
+              {/* Distribuidor Connect Card */}
               <div className="p-6 rounded-2xl bg-slate-900/80 border border-slate-800 shadow-xl relative overflow-hidden flex flex-col justify-between">
                 <div className="flex items-center justify-between pb-3 border-b border-slate-800">
                   <div className="flex items-center gap-2.5">
@@ -349,7 +442,7 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard 
                       <Share2 className="w-4 h-4" />
                     </div>
                     <div>
-                      <h3 className="text-base font-bold text-white">Connectors (CO)</h3>
+                      <h3 className="text-base font-bold text-white">Distribuidor Connect</h3>
                       <p className="text-[11px] text-slate-400">Red Externa / Aliados</p>
                     </div>
                   </div>
@@ -361,15 +454,35 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard 
                 <div className="grid grid-cols-3 gap-3 py-5 text-center">
                   <div>
                     <div className="text-xs text-slate-400">Ventas Totales</div>
-                    <div className="text-lg sm:text-xl font-black text-amber-400 tabular-nums mt-1">
-                      ${totalCoSales.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </div>
+                    {isEditMode ? (
+                      <input
+                        type="number"
+                        step="any"
+                        value={Number(editValues['totalCoSales'] !== undefined ? editValues['totalCoSales'] : totalCoSales)}
+                        onChange={(e) => setEditValues({ ...editValues, totalCoSales: parseFloat(e.target.value) || 0, r1_kpi_co_sales: parseFloat(e.target.value) || 0 })}
+                        className="w-full text-base sm:text-lg font-black text-amber-400 bg-slate-950 border border-emerald-500 rounded px-1.5 py-0.5 mt-1 text-center focus:outline-none"
+                      />
+                    ) : (
+                      <div className="text-lg sm:text-xl font-black text-amber-400 tabular-nums mt-1">
+                        ${totalCoSales.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </div>
+                    )}
                   </div>
                   <div>
                     <div className="text-xs text-slate-400">Firmas Emitidas</div>
-                    <div className="text-lg sm:text-xl font-black text-white tabular-nums mt-1">
-                      {totalCoCount}
-                    </div>
+                    {isEditMode ? (
+                      <input
+                        type="number"
+                        step="1"
+                        value={Number(editValues['totalCoCount'] !== undefined ? editValues['totalCoCount'] : totalCoCount)}
+                        onChange={(e) => setEditValues({ ...editValues, totalCoCount: parseInt(e.target.value, 10) || 0, r1_kpi_co_count: parseInt(e.target.value, 10) || 0 })}
+                        className="w-full text-base sm:text-lg font-black text-white bg-slate-950 border border-emerald-500 rounded px-1.5 py-0.5 mt-1 text-center focus:outline-none"
+                      />
+                    ) : (
+                      <div className="text-lg sm:text-xl font-black text-white tabular-nums mt-1">
+                        {totalCoCount}
+                      </div>
+                    )}
                     <div className="text-[10px] text-slate-500">({totalCoCount} en el periodo)</div>
                   </div>
                   <div>
@@ -393,7 +506,7 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard 
 
             <div className="flex justify-between items-center text-[11px] text-slate-500 border-t border-slate-800/60 pt-3">
               <div className="flex items-center gap-3">
-                <span>Rendimiento normalizado por canal directo vs distribuidores aliados</span>
+                <span>Rendimiento normalizado por Distribuidor Upconnect vs Distribuidor Connect</span>
                 {!isPrint && (
                   <button
                     onClick={jumpToSociosSlide}
@@ -419,16 +532,16 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard 
                 <div className="flex items-center gap-4 text-xs font-medium">
                   <div className="flex items-center gap-2">
                     <span className="w-3 h-3 rounded bg-blue-600" />
-                    <span className="text-slate-300">UpConnect (UP)</span>
+                    <span className="text-slate-300">Distribuidor Upconnect</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="w-3 h-3 rounded bg-amber-500" />
-                    <span className="text-slate-300">Connectors (CO)</span>
+                    <span className="text-slate-300">Distribuidor Connect</span>
                   </div>
                 </div>
               </div>
               <h2 className="text-xl sm:text-2xl font-bold text-white tracking-tight mt-0.5">
-                Ventas Acumuladas año 2026: UpConnect vs Connectors
+                Ventas Acumuladas año 2026: Distribuidor Upconnect vs Distribuidor Connect
               </h2>
             </div>
 
@@ -482,7 +595,7 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard 
                                 <div 
                                   style={{ height: `${coPct}%` }} 
                                   className="w-full min-h-[4px] bg-gradient-to-t from-amber-600 to-amber-400 rounded-t-md transition-all duration-300 shadow-md shadow-amber-900/40"
-                                  title={`Connectors ${item.month}: $${item.connectorsSales.toFixed(2)} USD (${item.connectorsCount} firmas)`}
+                                  title={`Distribuidor Connect ${item.month}: $${item.connectorsSales.toFixed(2)} USD (${item.connectorsCount} firmas)`}
                                 />
                               </div>
                             </div>
@@ -493,7 +606,7 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard 
                               </div>
                               <div className="text-[10px] text-slate-400 tabular-nums mt-0.5">
                                 {item.connectorsCount > 0 
-                                  ? `UP: ${item.upconnectCount} | CO: ${item.connectorsCount}`
+                                  ? `UP: ${item.upconnectCount} | CONNECT: ${item.connectorsCount}`
                                   : `${item.upconnectCount} firmas`}
                               </div>
                             </div>
@@ -514,7 +627,7 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard 
                   <>
                     Facturación consolidada de{' '}
                     <strong className="text-white">${totalSales.toLocaleString('en-US', { minimumFractionDigits: 2 })} USD</strong>{' '}
-                    con <strong className="text-emerald-400">{totalCount}</strong> certificados emitidos en total (UpConnect: ${totalUpSales.toLocaleString('en-US', { minimumFractionDigits: 2 })} USD / Connectors: ${totalCoSales.toLocaleString('en-US', { minimumFractionDigits: 2 })} USD).
+                    con <strong className="text-emerald-400">{totalCount}</strong> certificados emitidos en total (Distribuidor Upconnect: ${totalUpSales.toLocaleString('en-US', { minimumFractionDigits: 2 })} USD / Distribuidor Connect: ${totalCoSales.toLocaleString('en-US', { minimumFractionDigits: 2 })} USD).
                   </>
                 ) : (
                   <span>Sin registros de facturación cargados. La plataforma y los reportes están vacíos.</span>
@@ -551,7 +664,7 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard 
                   <Zap className="w-4 h-4 text-sky-400" />
                 </div>
                 <div className="flex items-baseline justify-between mb-3">
-                  <h3 className="text-lg font-black text-white">UPCONNECT</h3>
+                  <h3 className="text-lg font-black text-white">DISTRIBUIDOR UPCONNECT</h3>
                   <div className="text-right">
                     <span className="text-[11px] text-slate-400">FIRMAS ({viewData.periodLabel})</span>
                     <div className="text-base font-bold text-white tabular-nums">{totalUpCount} Firmas</div>
@@ -565,14 +678,14 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard 
                 </div>
               </div>
 
-              {/* Canal 02 CONNECTORS */}
+              {/* Canal 02 CONNECT */}
               <div className="p-5 rounded-2xl bg-slate-900/90 border border-slate-800 shadow-lg relative">
                 <div className="flex items-center justify-between pb-2.5">
                   <span className="text-xs font-bold text-amber-400 uppercase tracking-wider">CANAL 02</span>
                   <Share2 className="w-4 h-4 text-amber-400" />
                 </div>
                 <div className="flex items-baseline justify-between mb-3">
-                  <h3 className="text-lg font-black text-white">CONNECTORS</h3>
+                  <h3 className="text-lg font-black text-white">DISTRIBUIDOR CONNECT</h3>
                   <div className="text-right">
                     <span className="text-[11px] text-slate-400">FIRMAS ({viewData.periodLabel})</span>
                     <div className="text-base font-bold text-white tabular-nums">{totalCoCount} Firmas</div>
@@ -594,7 +707,7 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard 
                   Consolidado General ({viewData.periodLabel})
                 </span>
                 <h4 className="text-base font-bold text-white">
-                  SUMA TOTAL (UPCONNECT + CONNECTORS)
+                  SUMA TOTAL (DISTRIBUIDOR UPCONNECT + DISTRIBUIDOR CONNECT)
                 </h4>
               </div>
 
@@ -629,6 +742,10 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard 
         );
 
       case 'weekly':
+        const weeklyList = (viewData.weeklyBreakdownType1 && viewData.weeklyBreakdownType1.length > 0)
+          ? viewData.weeklyBreakdownType1
+          : dataset.weeklyBreakdownType1;
+
         return (
           <div className="h-full flex flex-col justify-between p-6 sm:p-10 relative bg-[#0c1322]">
             <div>
@@ -641,7 +758,7 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard 
             </div>
 
             {/* Weekly Top Cards or Empty state */}
-            {dataset.weeklyBreakdownType1.length === 0 ? (
+            {weeklyList.length === 0 ? (
               <div className="my-auto py-12 text-center text-slate-500 border border-dashed border-slate-800 rounded-xl max-w-2xl mx-auto px-6">
                 <p className="font-semibold text-slate-400">Sin desglose semanal registrado</p>
                 <p className="text-xs text-slate-500 mt-1">
@@ -650,20 +767,37 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard 
               </div>
             ) : (
               <>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 my-2">
-                  {dataset.weeklyBreakdownType1.map((w) => (
-                    <div key={w.id} className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 text-center">
-                      <span className="text-[11px] font-bold text-sky-400 uppercase">
-                        {w.weekName} ({w.dateRange})
-                      </span>
-                      <div className="text-base font-black text-white tabular-nums mt-0.5">
-                        {w.totalCount} Firmas | ${w.totalAmount.toFixed(2)} USD
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 my-2">
+                  {weeklyList.map((w) => {
+                    const wKey = `week_${w.id}_amount`;
+                    const currentAmt = editValues[wKey] !== undefined ? Number(editValues[wKey]) : w.totalAmount;
+                    return (
+                      <div key={w.id} className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 text-center">
+                        <span className="text-[11px] font-bold text-sky-400 uppercase">
+                          {w.weekName} ({w.dateRange})
+                        </span>
+                        <div className="text-base font-black text-white tabular-nums mt-0.5">
+                          {isEditMode ? (
+                            <div className="flex items-center justify-center gap-1">
+                              <span className="text-xs text-slate-400">$</span>
+                              <input
+                                type="number"
+                                step="any"
+                                value={currentAmt}
+                                onChange={(e) => setEditValues({ ...editValues, [wKey]: parseFloat(e.target.value) || 0 })}
+                                className="w-24 bg-slate-950 border border-emerald-500 rounded px-1.5 py-0.5 text-xs text-emerald-400 text-center font-bold"
+                              />
+                            </div>
+                          ) : (
+                            `${w.totalCount} Firmas | $${w.totalAmount.toFixed(2)} USD`
+                          )}
+                        </div>
+                        <div className="text-[11px] text-slate-400 mt-0.5">
+                          UP: {w.upconnectCount} (${w.upconnectAmount.toFixed(2)}) • CO: {w.connectorsCount} (${w.connectorsAmount.toFixed(2)})
+                        </div>
                       </div>
-                      <div className="text-[11px] text-slate-400 mt-0.5">
-                        UP: {w.upconnectCount} (${w.upconnectAmount.toFixed(2)}) • CO: {w.connectorsCount} (${w.connectorsAmount.toFixed(2)})
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
 
                 {/* Dual Bar Chart for Weeks */}
@@ -671,11 +805,11 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard 
                   <div className="flex justify-end gap-4 text-xs font-medium mb-2">
                     <div className="flex items-center gap-2">
                       <span className="w-2.5 h-2.5 rounded bg-blue-500" />
-                      <span className="text-slate-300">Upconnect (UP)</span>
+                      <span className="text-slate-300">Distribuidor Upconnect</span>
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="w-2.5 h-2.5 rounded bg-amber-500" />
-                      <span className="text-slate-300">Connectors (CO)</span>
+                      <span className="text-slate-300">Distribuidor Connect</span>
                     </div>
                   </div>
 
@@ -683,10 +817,10 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard 
                     {(() => {
                       const maxWeekCount = Math.max(
                         1,
-                        ...dataset.weeklyBreakdownType1.map((w) => Math.max(w.upconnectCount, w.connectorsCount, 1))
+                        ...weeklyList.map((w) => Math.max(w.upconnectCount, w.connectorsCount, 1))
                       );
 
-                      return dataset.weeklyBreakdownType1.map((w) => {
+                      return weeklyList.map((w) => {
                         const upPct = Math.min(100, Math.max(w.upconnectCount > 0 ? 8 : 0, (w.upconnectCount / maxWeekCount) * 100));
                         const coPct = Math.min(100, Math.max(w.connectorsCount > 0 ? 8 : 0, (w.connectorsCount / maxWeekCount) * 100));
 
@@ -716,7 +850,7 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard 
                                 <div 
                                   style={{ height: `${coPct}%` }}
                                   className="w-full min-h-[4px] bg-gradient-to-t from-amber-600 to-amber-400 rounded-t-md transition-all shadow-md shadow-amber-900/20"
-                                  title={`Connectors ${w.weekName}: ${w.connectorsCount} firmas ($${w.connectorsAmount.toFixed(2)} USD)`}
+                                  title={`Distribuidor Connect ${w.weekName}: ${w.connectorsCount} firmas ($${w.connectorsAmount.toFixed(2)} USD)`}
                                 />
                               </div>
                             </div>
@@ -735,7 +869,7 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard 
             {/* Green highlight banner */}
             <div className="p-2.5 rounded-xl bg-emerald-500/20 border border-emerald-500/30 text-center text-xs text-emerald-300 font-bold">
               {totalCount > 0 
-                ? `TOTAL CONSOLIDADO ${viewData.periodLabel.toUpperCase()}: ${totalCount} FIRMAS | $${totalSales.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD (Upconnect: ${totalUpCount} firmas | Connectors: ${totalCoCount} firmas)`
+                ? `TOTAL CONSOLIDADO ${viewData.periodLabel.toUpperCase()}: ${totalCount} FIRMAS | $${totalSales.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD (Distribuidor Upconnect: ${totalUpCount} firmas | Distribuidor Connect: ${totalCoCount} firmas)`
                 : 'TOTAL CONSOLIDADO: 0 FIRMAS | $0.00 USD (Sin datos cargados)'
               }
             </div>
@@ -751,22 +885,22 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard 
                   ESTRUCTURA DE PORTAFOLIO Y CATÁLOGO
                 </span>
                 <span className="px-2.5 py-0.5 rounded text-[11px] bg-blue-500/10 text-sky-300 border border-blue-500/20 font-semibold">
-                  TOP 5 POR CANAL
+                  TOP 6 POR CANAL
                 </span>
               </div>
               <h2 className="text-xl sm:text-2xl font-bold text-white tracking-tight mt-0.5">
-                Top 5 de Producto Más Vendido: UpConnect vs Connectors
+                Top 6 de Producto Más Vendido: Distribuidor Upconnect vs Distribuidor Connect
               </h2>
             </div>
 
-            {/* Two Side-by-side Top 5 Product Columns */}
+            {/* Two Side-by-side Top 6 Product Columns */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 my-auto">
-              {/* UpConnect Top 5 Column */}
+              {/* Upconnect Top 6 Column */}
               <div className="p-5 rounded-2xl bg-slate-900/90 border-t-4 border-blue-500 border-x border-b border-slate-800 shadow-xl flex flex-col justify-between">
                 <div className="flex items-center justify-between pb-3 border-b border-slate-800">
                   <div className="flex items-center gap-2">
                     <Zap className="w-4 h-4 text-sky-400" />
-                    <h3 className="text-base font-bold text-white">UpConnect (Canal Propio)</h3>
+                    <h3 className="text-base font-bold text-white">Distribuidor Upconnect (Canal Propio)</h3>
                   </div>
                   <span className="text-xs text-sky-400 font-semibold tabular-nums">
                     {totalUpCount} Firmas Totales
@@ -776,53 +910,94 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard 
                 <div className="divide-y divide-slate-800/70 py-1 space-y-2 mt-2">
                   {topUpProducts.length === 0 ? (
                     <div className="py-8 text-center text-slate-500 text-xs">
-                      Sin datos de productos para UpConnect
+                      Sin datos de productos para Distribuidor Upconnect
                     </div>
                   ) : (
-                    topUpProducts.map((p) => (
-                      <div key={p.rank} className="pt-2">
-                        <div className="flex items-center justify-between text-xs mb-1">
-                          <div className="flex items-center gap-2">
-                            <span className={`w-5 h-5 rounded-full flex items-center justify-center font-bold text-[10px] ${
-                              p.rank === 1 ? 'bg-blue-600 text-white shadow-sm' : 'bg-slate-800 text-slate-300'
-                            }`}>
-                              {p.rank}
-                            </span>
-                            <span className="font-semibold text-slate-200">
-                              {p.name} {p.label && <span className="text-sky-400 font-bold ml-1">({p.label})</span>}
-                            </span>
-                          </div>
-                          <div className="text-right">
-                            <strong className="text-white tabular-nums">{p.count} firmas</strong>
-                            <span className="text-slate-400 text-[11px] ml-2">(${p.sales.toFixed(2)})</span>
-                          </div>
-                        </div>
+                    topUpProducts.map((p) => {
+                      const nameKey = `top_up_${p.rank}_name`;
+                      const countKey = `top_up_${p.rank}_count`;
+                      const salesKey = `top_up_${p.rank}_sales`;
+                      const displayName = editValues[nameKey] !== undefined ? String(editValues[nameKey]) : p.name;
+                      const displayCount = editValues[countKey] !== undefined ? Number(editValues[countKey]) : p.count;
+                      const displaySales = editValues[salesKey] !== undefined ? Number(editValues[salesKey]) : p.sales;
 
-                        <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
-                          <div
-                            style={{ width: `${Math.max(5, p.percentage)}%` }}
-                            className={`h-full ${p.rank === 1 ? 'bg-sky-400' : 'bg-blue-600'} rounded-full transition-all`}
-                          />
+                      return (
+                        <div key={p.rank} className="pt-2">
+                          <div className="flex items-center justify-between text-xs mb-1">
+                            <div className="flex items-center gap-2 flex-1 mr-2">
+                              <span className={`w-5 h-5 rounded-full flex items-center justify-center font-bold text-[10px] shrink-0 ${
+                                p.rank === 1 ? 'bg-blue-600 text-white shadow-sm' : 'bg-slate-800 text-slate-300'
+                              }`}>
+                                {p.rank}
+                              </span>
+                              {isEditMode ? (
+                                <input
+                                  type="text"
+                                  value={displayName}
+                                  onChange={(e) => setEditValues({ ...editValues, [nameKey]: e.target.value })}
+                                  className="w-full bg-slate-950 border border-emerald-500 rounded px-1.5 py-0.5 text-xs text-white"
+                                />
+                              ) : (
+                                <span className="font-semibold text-slate-200">
+                                  {displayName} {p.label && <span className="text-sky-400 font-bold ml-1">({p.label})</span>}
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-right shrink-0">
+                              {isEditMode ? (
+                                <div className="flex items-center gap-1 justify-end">
+                                  <input
+                                    type="number"
+                                    value={displayCount}
+                                    onChange={(e) => setEditValues({ ...editValues, [countKey]: parseInt(e.target.value) || 0 })}
+                                    className="w-14 bg-slate-950 border border-emerald-500 rounded px-1 py-0.5 text-xs text-emerald-400 text-center font-bold"
+                                    title="Cantidad de firmas"
+                                  />
+                                  <span className="text-[10px] text-slate-400">$</span>
+                                  <input
+                                    type="number"
+                                    step="any"
+                                    value={displaySales}
+                                    onChange={(e) => setEditValues({ ...editValues, [salesKey]: parseFloat(e.target.value) || 0 })}
+                                    className="w-16 bg-slate-950 border border-emerald-500 rounded px-1 py-0.5 text-xs text-emerald-400 text-center font-bold"
+                                    title="Monto en USD"
+                                  />
+                                </div>
+                              ) : (
+                                <>
+                                  <strong className="text-white tabular-nums">{displayCount} firmas</strong>
+                                  <span className="text-slate-400 text-[11px] ml-2">(${displaySales.toFixed(2)})</span>
+                                </>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
+                            <div
+                              style={{ width: `${Math.max(5, p.percentage)}%` }}
+                              className={`h-full ${p.rank === 1 ? 'bg-sky-400' : 'bg-blue-600'} rounded-full transition-all`}
+                            />
+                          </div>
                         </div>
-                      </div>
-                    ))
+                      );
+                    })
                   )}
                 </div>
 
                 <div className="pt-3 mt-2 border-t border-slate-800/80 flex items-center justify-between text-xs text-slate-400">
-                  <span>Concentración Top 5:</span>
+                  <span>Concentración Top 6:</span>
                   <strong className="text-sky-300 tabular-nums">
                     {topUpProducts.reduce((a, b) => a + b.count, 0)} firmas ({topUpProducts.reduce((a, b) => a + b.percentage, 0).toFixed(1)}%)
                   </strong>
                 </div>
               </div>
 
-              {/* Connectors Top 5 Column */}
+              {/* Connect Top 6 Column */}
               <div className="p-5 rounded-2xl bg-slate-900/90 border-t-4 border-amber-500 border-x border-b border-slate-800 shadow-xl flex flex-col justify-between">
                 <div className="flex items-center justify-between pb-3 border-b border-slate-800">
                   <div className="flex items-center gap-2">
                     <Share2 className="w-4 h-4 text-amber-400" />
-                    <h3 className="text-base font-bold text-white">Connectors (Red Externa)</h3>
+                    <h3 className="text-base font-bold text-white">Distribuidor Connect (Red Externa)</h3>
                   </div>
                   <span className="text-xs text-amber-400 font-semibold tabular-nums">
                     {totalCoCount} Firmas Totales
@@ -832,41 +1007,82 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard 
                 <div className="divide-y divide-slate-800/70 py-1 space-y-2 mt-2">
                   {topCoProducts.length === 0 ? (
                     <div className="py-8 text-center text-slate-500 text-xs">
-                      Sin datos de productos para Connectors
+                      Sin datos de productos para Distribuidor Connect
                     </div>
                   ) : (
-                    topCoProducts.map((p) => (
-                      <div key={p.rank} className="pt-2">
-                        <div className="flex items-center justify-between text-xs mb-1">
-                          <div className="flex items-center gap-2">
-                            <span className={`w-5 h-5 rounded-full flex items-center justify-center font-bold text-[10px] ${
-                              p.rank === 1 ? 'bg-amber-600 text-white shadow-sm' : 'bg-slate-800 text-slate-300'
-                            }`}>
-                              {p.rank}
-                            </span>
-                            <span className="font-semibold text-slate-200">
-                              {p.name} {p.label && <span className="text-amber-400 font-bold ml-1">({p.label})</span>}
-                            </span>
-                          </div>
-                          <div className="text-right">
-                            <strong className="text-white tabular-nums">{p.count} firmas</strong>
-                            <span className="text-slate-400 text-[11px] ml-2">(${p.sales.toFixed(2)})</span>
-                          </div>
-                        </div>
+                    topCoProducts.map((p) => {
+                      const nameKey = `top_co_${p.rank}_name`;
+                      const countKey = `top_co_${p.rank}_count`;
+                      const salesKey = `top_co_${p.rank}_sales`;
+                      const displayName = editValues[nameKey] !== undefined ? String(editValues[nameKey]) : p.name;
+                      const displayCount = editValues[countKey] !== undefined ? Number(editValues[countKey]) : p.count;
+                      const displaySales = editValues[salesKey] !== undefined ? Number(editValues[salesKey]) : p.sales;
 
-                        <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
-                          <div
-                            style={{ width: `${Math.max(5, p.percentage)}%` }}
-                            className={`h-full ${p.rank === 1 ? 'bg-amber-400' : 'bg-amber-600'} rounded-full transition-all`}
-                          />
+                      return (
+                        <div key={p.rank} className="pt-2">
+                          <div className="flex items-center justify-between text-xs mb-1">
+                            <div className="flex items-center gap-2 flex-1 mr-2">
+                              <span className={`w-5 h-5 rounded-full flex items-center justify-center font-bold text-[10px] shrink-0 ${
+                                p.rank === 1 ? 'bg-amber-600 text-white shadow-sm' : 'bg-slate-800 text-slate-300'
+                              }`}>
+                                {p.rank}
+                              </span>
+                              {isEditMode ? (
+                                <input
+                                  type="text"
+                                  value={displayName}
+                                  onChange={(e) => setEditValues({ ...editValues, [nameKey]: e.target.value })}
+                                  className="w-full bg-slate-950 border border-emerald-500 rounded px-1.5 py-0.5 text-xs text-white"
+                                />
+                              ) : (
+                                <span className="font-semibold text-slate-200">
+                                  {displayName} {p.label && <span className="text-amber-400 font-bold ml-1">({p.label})</span>}
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-right shrink-0">
+                              {isEditMode ? (
+                                <div className="flex items-center gap-1 justify-end">
+                                  <input
+                                    type="number"
+                                    value={displayCount}
+                                    onChange={(e) => setEditValues({ ...editValues, [countKey]: parseInt(e.target.value) || 0 })}
+                                    className="w-14 bg-slate-950 border border-emerald-500 rounded px-1 py-0.5 text-xs text-emerald-400 text-center font-bold"
+                                    title="Cantidad de firmas"
+                                  />
+                                  <span className="text-[10px] text-slate-400">$</span>
+                                  <input
+                                    type="number"
+                                    step="any"
+                                    value={displaySales}
+                                    onChange={(e) => setEditValues({ ...editValues, [salesKey]: parseFloat(e.target.value) || 0 })}
+                                    className="w-16 bg-slate-950 border border-emerald-500 rounded px-1 py-0.5 text-xs text-emerald-400 text-center font-bold"
+                                    title="Monto en USD"
+                                  />
+                                </div>
+                              ) : (
+                                <>
+                                  <strong className="text-white tabular-nums">{displayCount} firmas</strong>
+                                  <span className="text-slate-400 text-[11px] ml-2">(${displaySales.toFixed(2)})</span>
+                                </>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
+                            <div
+                              style={{ width: `${Math.max(5, p.percentage)}%` }}
+                              className={`h-full ${p.rank === 1 ? 'bg-amber-400' : 'bg-amber-600'} rounded-full transition-all`}
+                            />
+                          </div>
                         </div>
-                      </div>
-                    ))
+                      );
+                    })
                   )}
                 </div>
 
                 <div className="pt-3 mt-2 border-t border-slate-800/80 flex items-center justify-between text-xs text-slate-400">
-                  <span>Concentración Top 5:</span>
+                  <span>Concentración Top 6:</span>
                   <strong className="text-amber-300 tabular-nums">
                     {topCoProducts.reduce((a, b) => a + b.count, 0)} firmas ({topCoProducts.reduce((a, b) => a + b.percentage, 0).toFixed(1)}%)
                   </strong>
@@ -952,7 +1168,7 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard 
                   <div className="flex items-center justify-between">
                     <h3 className="text-sm font-bold text-white">Franquicia Contadores VIP</h3>
                     <span className="text-[10px] px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 font-semibold">
-                      Connectors Aliados
+                      Distribuidor Connect Aliados
                     </span>
                   </div>
                   <div className="text-3xl font-black text-purple-400 tabular-nums my-2">
@@ -961,7 +1177,7 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard 
                   <div className="text-[11px] text-slate-400 font-medium">Socios Registrados</div>
                 </div>
                 <p className="text-[11px] text-slate-300 leading-relaxed border-t border-slate-800 pt-2 mt-1">
-                  Grupo élite de contadores franquiciados y red externa Connectors.
+                  Grupo élite de contadores franquiciados y red externa Distribuidor Connect.
                 </p>
               </div>
 
@@ -985,18 +1201,18 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard 
               </div>
             </div>
 
-            {/* TABLA ADICIONAL: Cantidad de Socios UpConnect vs Connectors */}
+            {/* TABLA ADICIONAL: Cantidad de Socios Distribuidor Upconnect vs Distribuidor Connect */}
             <div className="my-1">
               <SociosChannelTable
                 summary={viewData.sociosSummary}
                 variant="slide"
-                title="Distribución y Cantidad de Socios por Canal: UpConnect vs Connectors"
+                title="Distribución y Cantidad de Socios por Canal: Distribuidor Upconnect vs Distribuidor Connect"
               />
             </div>
 
             {/* Bottom official ecosystem banner */}
             <div className="p-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-xs text-slate-300 text-center">
-              Ecosistema oficial: <strong className="text-white">{upcontaMembers + franquiciaMembers} operadores en cartera</strong> ({upcontaMembers} UpConnect / {franquiciaMembers} Connectors) y{' '}
+              Ecosistema oficial: <strong className="text-white">{upcontaMembers + franquiciaMembers} operadores en cartera</strong> ({upcontaMembers} Distribuidor Upconnect / {franquiciaMembers} Distribuidor Connect) y{' '}
               <strong className="text-sky-400">{upcontaMembers + franquiciaMembers + formacionMembers} miembros en comunidades oficiales</strong>.
               {isManuallyModified && (
                 <span className="ml-2 text-amber-400 font-medium text-[11px]">(Valores personalizados manualmente)</span>
@@ -1051,7 +1267,7 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard 
             <div className="flex items-center justify-between mt-2 mb-1">
               <span className="text-xs text-slate-400">
                 {sociosViewMode === 'channels'
-                  ? 'Mostrando resumen cuantitativo de Socios UpConnect vs Connectors'
+                  ? 'Mostrando resumen cuantitativo de Socios Distribuidor Upconnect vs Distribuidor Connect'
                   : 'Mostrando ranking individual de vendedores auditados'}
               </span>
               <div className="flex items-center p-1 bg-slate-900 border border-slate-700/80 rounded-xl">
@@ -1071,7 +1287,7 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard 
                   }`}
                 >
                   <Users className="w-3.5 h-3.5" />
-                  <span>Resumen Canales ({viewData.sociosSummary.upconnect.count} UP / {viewData.sociosSummary.connectors.count} CO)</span>
+                  <span>Resumen Canales ({viewData.sociosSummary.upconnect.count} UP / {viewData.sociosSummary.connectors.count} CONNECT)</span>
                 </button>
               </div>
             </div>
@@ -1187,7 +1403,7 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard 
             </button>
           )}
           <span className="text-xs uppercase tracking-wider font-semibold text-sky-400">
-            Presentación Tipo 1 · Reporte Upconnect & Connectors
+            Presentación Tipo 1 · Reporte Distribuidor Upconnect & Distribuidor Connect
           </span>
           <span className="text-slate-600">|</span>
           <span className="text-xs px-2 py-0.5 rounded-full bg-sky-950/80 text-sky-300 border border-sky-800/60 font-medium">
@@ -1247,27 +1463,101 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard 
           <button
             onClick={handleExportPPTX}
             disabled={isExportingPPTX}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white shadow-sm transition-colors"
-            title="Descargar presentación editable en formato PowerPoint (.pptx)"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white shadow-sm transition-colors"
+            title="Descargar presentación unificada con los reportes 1 y 2 consolidados (.pptx)"
           >
             {isExportingPPTX ? (
               <Loader2 className="w-4 h-4 animate-spin" />
             ) : (
               <FileDown className="w-4 h-4" />
             )}
-            <span>Descargar PPTX</span>
+            <span>Descargar PPTX Unificado</span>
           </button>
 
           <button
-            onClick={handlePrint}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded bg-slate-800 hover:bg-slate-700 text-slate-200 transition-colors"
-            title="Exportar a PDF o Imprimir diapositivas"
+            onClick={() => setIsReorderModalOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded bg-slate-800 hover:bg-slate-700 text-slate-200 transition-colors"
+            title="Mover y organizar diapositivas"
           >
-            <Printer className="w-4 h-4" />
-            <span className="hidden sm:inline">PDF / Imprimir</span>
+            <Layers className="w-4 h-4 text-sky-400" />
+            <span className="hidden sm:inline">Mover Diapositivas</span>
           </button>
+
+          {isEditMode ? (
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => setIsEditorModalOpen(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded bg-blue-600/40 hover:bg-blue-600 text-sky-200 hover:text-white border border-sky-500/50 transition-colors shadow-sm"
+                title="Abrir formulario para editar campos de la diapositiva"
+              >
+                <Edit3 className="w-4 h-4" />
+                <span>Editar Campos</span>
+              </button>
+              <button
+                onClick={handleSaveAllChanges}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded bg-emerald-600 hover:bg-emerald-500 text-white shadow-md shadow-emerald-950/40 transition-all animate-pulse"
+                title="Guardar cambios de textos y valores"
+              >
+                <Check className="w-4 h-4" />
+                <span>Guardar Cambios</span>
+              </button>
+              <button
+                onClick={handleCancelEdit}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
+                title="Cancelar edición"
+              >
+                <X className="w-4 h-4" />
+                <span>Cancelar</span>
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => {
+                setIsEditMode(true);
+                setIsEditorModalOpen(true);
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded bg-blue-600/30 hover:bg-blue-600 text-sky-300 hover:text-white border border-sky-500/40 transition-colors shadow-sm"
+              title="Modificar textos y valores de la presentación"
+            >
+              <Edit3 className="w-4 h-4" />
+              <span>Editar</span>
+            </button>
+          )}
         </div>
       </div>
+
+      {/* Edit Mode Banner */}
+      {isEditMode && (
+        <div className="bg-emerald-950/90 border-b border-emerald-600/60 px-6 py-2.5 flex items-center justify-between text-xs text-emerald-200 no-print flex-wrap gap-2">
+          <div className="flex items-center gap-2">
+            <Edit3 className="w-4 h-4 text-emerald-400 animate-pulse" />
+            <span>
+              <strong>Modo Edición Activado:</strong> Modifique los textos y valores directamente en pantalla o abra el editor de diapositiva.
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setIsEditorModalOpen(true)}
+              className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-sky-300 border border-sky-500/40 font-semibold rounded transition-colors text-xs"
+            >
+              Abrir Formulario de Edición
+            </button>
+            <button
+              onClick={handleSaveAllChanges}
+              className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded shadow-sm text-xs flex items-center gap-1 transition-colors"
+            >
+              <Check className="w-3.5 h-3.5" />
+              <span>Guardar Cambios</span>
+            </button>
+            <button
+              onClick={handleCancelEdit}
+              className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded text-xs transition-colors"
+            >
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* 1. SCREEN VIEW: Active slide in 16:9 container */}
       <div className="print:hidden flex-1 flex items-center justify-center p-2 sm:p-6 bg-[#070b14] overflow-auto">
@@ -1325,7 +1615,7 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard 
 
               <div>
                 <label className="block text-xs font-semibold text-slate-300 mb-1">
-                  Franquicia Contadores VIP (Connectors Aliados)
+                  Franquicia Contadores VIP (Distribuidor Connect Aliados)
                 </label>
                 <div className="text-[11px] text-slate-500 mb-1.5">
                   Socios calculados en Excel: <strong className="text-amber-400">{autoCoSocios}</strong>
@@ -1394,6 +1684,40 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard 
           </div>
         </div>
       )}
+      {/* MODAL: Mover y Reorganizar Diapositivas */}
+      <ReorderSlidesModal
+        isOpen={isReorderModalOpen}
+        onClose={() => setIsReorderModalOpen(false)}
+        slides={activeSlides.map((s) => ({
+          id: s.id,
+          title: s.title,
+        }))}
+        reportTitle="Reporte 1: Distribuidor Upconnect / Distribuidor Connect"
+        onSaveOrder={(newOrder) => {
+          if (onUpdateDataset) {
+            onUpdateDataset({ customSlideOrder1: newOrder });
+          }
+        }}
+        onResetDefault={() => {
+          if (onUpdateDataset) {
+            onUpdateDataset({ customSlideOrder1: [] });
+          }
+        }}
+      />
+
+      {/* MODAL: Editor de Diapositiva */}
+      <SlideEditorModal
+        isOpen={isEditorModalOpen}
+        onClose={() => setIsEditorModalOpen(false)}
+        reportType={1}
+        slideId={currentSlideDef.id}
+        slideTitle={currentSlideDef.title}
+        viewData={viewData}
+        dataset={dataset}
+        editValues={editValues}
+        onChangeValue={(key, val) => setEditValues((prev) => ({ ...prev, [key]: val }))}
+        onSave={handleSaveAllChanges}
+      />
     </div>
   );
 };

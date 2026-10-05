@@ -1,14 +1,15 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { GlobalDataset, SocioRecord } from '../types';
-import { computeReportView, extractTransactionMonth, MONTH_NAMES_ES, computeSociosChannelSummary } from '../utils/reportFilters';
+import { GlobalDataset, SocioRecord, SolutionCategory } from '../types';
+import { computeReportView, computeSociosChannelSummary } from '../utils/reportFilters';
 import { exportPresentationType2ToPPTX } from '../services/pptxExportService';
 import { SociosChannelTable } from './SociosChannelTable';
+import { ReorderSlidesModal } from './ReorderSlidesModal';
+import { SlideEditorModal } from './SlideEditorModal';
 import { 
   ChevronLeft, 
   ChevronRight, 
   Maximize2, 
   Minimize2, 
-  Printer, 
   TrendingUp, 
   Users, 
   Award, 
@@ -16,118 +17,97 @@ import {
   ShieldCheck, 
   CheckCircle2, 
   FileText, 
-  Activity,
-  Briefcase,
-  FileDown,
-  Loader2,
-  Table,
-  BarChart3,
-  Search
+  Activity, 
+  Briefcase, 
+  FileDown, 
+  Loader2, 
+  Table, 
+  BarChart3, 
+  Search,
+  Edit3,
+  Check,
+  X,
+  Sparkles,
+  Zap,
+  Share2
 } from 'lucide-react';
 
 interface Props {
   dataset: GlobalDataset;
   onBackToDashboard?: () => void;
+  onUpdateDataset?: (updated: Partial<GlobalDataset>) => void;
 }
 
-export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard }) => {
+interface SlideConfig2 {
+  id: 'cover' | 'balance' | 'monthly' | 'socios' | 'weekly' | 'solutions' | 'funnel' | 'cross';
+  title: string;
+  subtitle?: string;
+}
+
+export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard, onUpdateDataset }) => {
   const [currentSlide, setCurrentSlide] = useState<number>(1);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
-  const [sociosViewMode, setSociosViewMode] = useState<'table' | 'pareto' | 'channels'>('table');
-  const [socioSearch, setSocioSearch] = useState<string>('');
-  const [slide4MonthFilter, setSlide4MonthFilter] = useState<string>('ALL');
-  const totalSlides = 8;
+  const [isExportingPPTX, setIsExportingPPTX] = useState<boolean>(false);
+
+  // Slide Reordering & Edit Mode state
+  const [isReorderModalOpen, setIsReorderModalOpen] = useState<boolean>(false);
+  const [isEditorModalOpen, setIsEditorModalOpen] = useState<boolean>(false);
+  const [isEditMode, setIsEditMode] = useState<boolean>(false);
+  const [editValues, setEditValues] = useState<Record<string, string | number>>(dataset.customOverrides || {});
+
+  useEffect(() => {
+    setEditValues(dataset.customOverrides || {});
+  }, [dataset.customOverrides]);
+
+  const handleSaveAllChanges = () => {
+    if (onUpdateDataset) {
+      onUpdateDataset({ customOverrides: editValues });
+    }
+    setIsEditMode(false);
+    setIsEditorModalOpen(false);
+  };
+
+  const handleCancelEdit = () => {
+    setEditValues(dataset.customOverrides || {});
+    setIsEditMode(false);
+  };
 
   const viewData = computeReportView(dataset);
 
+  const baseSlides: SlideConfig2[] = [
+    { id: 'cover', title: 'Portada Auditoría UpConta', subtitle: 'Presentación Ejecutiva Oficial' },
+    { id: 'balance', title: 'Balance General de Facturación 2026', subtitle: 'Consolidado Neto y Bruto con IVA' },
+    { id: 'monthly', title: 'Evolución de Ventas Mes a Mes (Sin IVA)', subtitle: 'Histórico Comparativo Mensual' },
+    { id: 'socios', title: 'Ranking de Socios: Pareto y Canales', subtitle: 'Gráfico Pareto & Canales en una sola hoja' },
+    { id: 'weekly', title: 'Desglose de Rendimiento Semana a Semana', subtitle: 'Auditoría Semanal de Ventas' },
+    { id: 'solutions', title: 'Ventas por Categoría de Solución', subtitle: 'Portafolio de Sistemas y Servicios' },
+    { id: 'funnel', title: 'Canal de Distribución - Embudo de Socios', subtitle: 'Comunidades y Franquicias Activas' },
+    { id: 'cross', title: 'Estrategia Comercial - Cruce Integral', subtitle: 'Fuerza Interna vs Red de Socios' },
+  ];
+
+  // Reorder slides dynamically according to dataset.customSlideOrder2
+  const activeSlides: SlideConfig2[] = (() => {
+    if (!dataset.customSlideOrder2 || dataset.customSlideOrder2.length === 0) {
+      return baseSlides;
+    }
+    const order = dataset.customSlideOrder2;
+    return [...baseSlides].sort((a, b) => {
+      const idxA = order.indexOf(a.id);
+      const idxB = order.indexOf(b.id);
+      if (idxA === -1 && idxB === -1) return 0;
+      if (idxA === -1) return 1;
+      if (idxB === -1) return -1;
+      return idxA - idxB;
+    });
+  })();
+
+  const totalSlides = activeSlides.length;
+
   useEffect(() => {
-    if (viewData.activeMonthName) {
-      setSlide4MonthFilter(viewData.activeMonthName);
+    if (currentSlide > totalSlides) {
+      setCurrentSlide(totalSlides);
     }
-  }, [viewData.activeMonthName]);
-
-  // Extract available months from transactions and metrics
-  const availableMonths = useMemo(() => {
-    const monthsSet = new Set<string>();
-    dataset.transactions.forEach((t) => {
-      const { monthName } = extractTransactionMonth(t);
-      if (monthName) monthsSet.add(monthName);
-    });
-    dataset.monthlyMetrics.forEach((m) => {
-      if (m.month) monthsSet.add(m.month.toUpperCase());
-    });
-    return MONTH_NAMES_ES.filter((m) => monthsSet.has(m));
-  }, [dataset.transactions, dataset.monthlyMetrics]);
-
-  // Derive exact socios based on slide4MonthFilter
-  const slide4Socios = useMemo(() => {
-    if (slide4MonthFilter === 'ALL') {
-      return viewData.socios;
-    }
-    const matching = dataset.transactions.filter(
-      (t) => extractTransactionMonth(t).monthName === slide4MonthFilter
-    );
-    if (matching.length === 0) {
-      return viewData.socios;
-    }
-    const map: Record<string, { total: number; count: number; role: string; plans: Record<string, number> }> = {};
-    matching.forEach((t) => {
-      const sName = (t.socio || (t.channel === 'Connectors' ? 'Distribuidor Connect' : 'UpConnect Directo')).trim();
-      if (!map[sName]) {
-        map[sName] = { total: 0, count: 0, role: t.role || 'Distribuidor Connect', plans: {} };
-      }
-      map[sName].total = parseFloat((map[sName].total + t.value).toFixed(2));
-      map[sName].count += 1;
-      if (t.role && t.role !== 'Distribuidor Connect') map[sName].role = t.role;
-      const planName = t.solutionCategory
-        ? (t.solutionCategory.includes('(') ? t.solutionCategory : (t.duration && t.duration !== 'Un año' ? `${t.solutionCategory} (${t.duration})` : t.solutionCategory))
-        : (t.duration || 'UP INTERMEDIO ($17.25)');
-      map[sName].plans[planName] = (map[sName].plans[planName] || 0) + 1;
-    });
-
-    const ranked: SocioRecord[] = Object.entries(map)
-      .map(([name, data]) => {
-        let topPlan = 'UP INTERMEDIO ($17.25)';
-        let maxCount = -1;
-        for (const [pName, count] of Object.entries(data.plans)) {
-          if (count > maxCount) {
-            maxCount = count;
-            topPlan = pName;
-          }
-        }
-        const avg = data.count > 0 ? (data.total / data.count) : 0;
-        return {
-          rank: 0,
-          name,
-          totalSales: parseFloat(data.total.toFixed(2)),
-          group: 'TOP 1-10' as const,
-          operationsCount: data.count,
-          averageTicket: parseFloat(avg.toFixed(2)),
-          topPlan,
-          role: data.role || 'Distribuidor Connect',
-        };
-      })
-      .sort((a, b) => b.totalSales - a.totalSales);
-
-    ranked.forEach((s, idx) => {
-      s.rank = idx + 1;
-      s.group = idx < 10 ? 'TOP 1-10' : 'TOP 11-20';
-      if (idx === 0) s.note = 'Líder del Mes';
-    });
-
-    return ranked;
-  }, [slide4MonthFilter, viewData.socios, dataset.transactions]);
-
-  // Summary of socios by channel (UpConnect vs Connectors) for slide 4
-  const slide4SociosSummary = useMemo(() => {
-    if (slide4MonthFilter === 'ALL') {
-      return viewData.sociosSummary;
-    }
-    const matching = dataset.transactions.filter(
-      (t) => extractTransactionMonth(t).monthName === slide4MonthFilter
-    );
-    return computeSociosChannelSummary(slide4Socios, matching);
-  }, [slide4MonthFilter, viewData.sociosSummary, slide4Socios, dataset.transactions]);
+  }, [totalSlides, currentSlide]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -141,16 +121,10 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard 
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isFullscreen]);
+  }, [isFullscreen, totalSlides]);
 
   const toggleFullscreen = () => {
     setIsFullscreen(!isFullscreen);
-  };
-
-  const [isExportingPPTX, setIsExportingPPTX] = useState<boolean>(false);
-
-  const handlePrint = () => {
-    window.print();
   };
 
   const handleExportPPTX = async () => {
@@ -170,7 +144,6 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard 
   const grossSales = viewData.grossSales;
   const activeSocios = viewData.socios;
 
-  // Monthly values for audit (derived dynamically from dataset)
   const activeMonthlyMetrics = (viewData.monthlyMetrics && viewData.monthlyMetrics.length > 0)
     ? viewData.monthlyMetrics
     : dataset.monthlyMetrics;
@@ -178,19 +151,33 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard 
   const auditMonthly = activeMonthlyMetrics.length > 0
     ? activeMonthlyMetrics.map((m, _, arr) => {
         const totalAmount = m.upconnectSales + m.connectorsSales;
-        const maxVal = Math.max(...arr.map((x) => x.upconnectSales + x.connectorsSales));
+        const maxSales = Math.max(...arr.map((x) => x.upconnectSales + x.connectorsSales), 1);
+        const percent = Math.round((totalAmount / maxSales) * 100);
         return {
-          period: `${m.month.charAt(0) + m.month.slice(1).toLowerCase()} 2026`,
-          amount: totalAmount,
-          color: totalAmount === maxVal && totalAmount > 0 ? 'bg-emerald-500' : 'bg-blue-600',
-          isRecord: totalAmount === maxVal && totalAmount > 0,
+          month: m.month,
+          total: totalAmount,
+          percent,
+          upconnect: m.upconnectSales,
+          connectors: m.connectorsSales,
         };
       })
     : [];
 
+  const maxAuditVal = auditMonthly.length > 0 ? Math.max(...auditMonthly.map((m) => m.total)) : 1;
+
+  const activeWeekly = (viewData.weeklyBreakdownType2 && viewData.weeklyBreakdownType2.length > 0)
+    ? viewData.weeklyBreakdownType2
+    : (dataset.weeklyBreakdownType2 || []);
+
+  const totalWeeklySales = activeWeekly.reduce((a, b) => a + b.amount, 0);
+
+  const activeCategories: SolutionCategory[] = dataset.solutionCategories || [];
+
+  const currentSlideDef = activeSlides[currentSlide - 1] || activeSlides[0];
+
   return (
     <div className={`flex flex-col ${isFullscreen ? 'fixed inset-0 z-50 bg-[#070b14]' : 'w-full'}`}>
-      {/* Top Controls */}
+      {/* Slide Deck Top Action Bar */}
       <div className="no-print flex items-center justify-between px-6 py-3 bg-[#0d1527] border-b border-slate-800 text-slate-300">
         <div className="flex items-center gap-3">
           {onBackToDashboard && (
@@ -202,7 +189,7 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard 
             </button>
           )}
           <span className="text-xs uppercase tracking-wider font-semibold text-emerald-400">
-            Presentación Tipo 2 · Auditoría Comercial & Gestión de Socios UpConta
+            Presentación Tipo 2 · Auditoría & Venta de Sistemas por Socio
           </span>
           <span className="text-slate-600">|</span>
           <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-950/80 text-emerald-300 border border-emerald-800/60 font-medium">
@@ -215,7 +202,7 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard 
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Jump buttons */}
+          {/* Slide jump buttons */}
           <div className="hidden md:flex items-center gap-1 mr-4">
             {Array.from({ length: totalSlides }, (_, i) => i + 1).map((num) => (
               <button
@@ -226,6 +213,7 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard 
                     ? 'bg-emerald-500 text-white font-bold'
                     : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
                 }`}
+                title={activeSlides[num - 1]?.title}
               >
                 {num}
               </button>
@@ -262,33 +250,107 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard 
             onClick={handleExportPPTX}
             disabled={isExportingPPTX}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white shadow-sm transition-colors"
-            title="Descargar presentación editable en formato PowerPoint (.pptx)"
+            title="Descargar presentación unificada con los reportes 1 y 2 consolidados (.pptx)"
           >
             {isExportingPPTX ? (
               <Loader2 className="w-4 h-4 animate-spin" />
             ) : (
               <FileDown className="w-4 h-4" />
             )}
-            <span>Descargar PPTX</span>
+            <span>Descargar PPTX Unificado</span>
           </button>
 
           <button
-            onClick={handlePrint}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded bg-slate-800 hover:bg-slate-700 text-slate-200 transition-colors"
-            title="Exportar a PDF o Imprimir"
+            onClick={() => setIsReorderModalOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded bg-slate-800 hover:bg-slate-700 text-slate-200 transition-colors"
+            title="Mover y organizar diapositivas (ej. mover la 8 a la posición 2)"
           >
-            <Printer className="w-4 h-4" />
-            <span className="hidden sm:inline">PDF / Imprimir</span>
+            <Layers className="w-4 h-4 text-emerald-400" />
+            <span className="hidden sm:inline">Mover Diapositivas</span>
           </button>
+
+          {isEditMode ? (
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => setIsEditorModalOpen(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded bg-emerald-600/40 hover:bg-emerald-600 text-emerald-200 hover:text-white border border-emerald-500/50 transition-colors shadow-sm"
+                title="Abrir formulario para editar campos de la diapositiva"
+              >
+                <Edit3 className="w-4 h-4" />
+                <span>Editar Campos</span>
+              </button>
+              <button
+                onClick={handleSaveAllChanges}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded bg-emerald-600 hover:bg-emerald-500 text-white shadow-md shadow-emerald-950/40 transition-all animate-pulse"
+                title="Guardar cambios de textos y valores en ambos reportes"
+              >
+                <Check className="w-4 h-4" />
+                <span>Guardar Cambios</span>
+              </button>
+              <button
+                onClick={handleCancelEdit}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
+                title="Cancelar edición"
+              >
+                <X className="w-4 h-4" />
+                <span>Cancelar</span>
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => {
+                setIsEditMode(true);
+                setIsEditorModalOpen(true);
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded bg-emerald-600/30 hover:bg-emerald-600 text-emerald-300 hover:text-white border border-emerald-500/40 transition-colors"
+              title="Modificar textos y valores de la presentación"
+            >
+              <Edit3 className="w-4 h-4" />
+              <span>Editar</span>
+            </button>
+          )}
         </div>
       </div>
+
+      {/* Edit Mode Banner */}
+      {isEditMode && (
+        <div className="bg-emerald-950/90 border-b border-emerald-600/60 px-6 py-2.5 flex items-center justify-between text-xs text-emerald-200 no-print flex-wrap gap-2">
+          <div className="flex items-center gap-2">
+            <Edit3 className="w-4 h-4 text-emerald-400 animate-pulse" />
+            <span>
+              <strong>Modo Edición Activado:</strong> Modifique los textos y valores directamente en pantalla o abra el editor de diapositiva.
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setIsEditorModalOpen(true)}
+              className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-500/40 font-semibold rounded transition-colors text-xs"
+            >
+              Abrir Formulario de Edición
+            </button>
+            <button
+              onClick={handleSaveAllChanges}
+              className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded shadow-sm text-xs flex items-center gap-1 transition-colors"
+            >
+              <Check className="w-3.5 h-3.5" />
+              <span>Guardar Cambios</span>
+            </button>
+            <button
+              onClick={handleCancelEdit}
+              className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded text-xs transition-colors"
+            >
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Main Slide Stage (16:9) */}
       <div className="flex-1 flex items-center justify-center p-2 sm:p-6 bg-[#070b14] overflow-auto">
         <div className="w-full max-w-[1240px] aspect-[16/9] min-h-[580px] bg-[#0c1322] border border-slate-800/80 rounded-2xl shadow-2xl relative overflow-hidden flex flex-col justify-between slide-container">
           
           {/* SLIDE 1: Cover */}
-          {currentSlide === 1 && (
+          {currentSlideDef.id === 'cover' && (
             <div className="h-full flex flex-col justify-center items-center text-center p-8 sm:p-16 relative bg-gradient-to-br from-[#0a1120] via-[#09101d] to-[#040812]">
               <div className="absolute w-[500px] h-[500px] rounded-full bg-emerald-500/10 blur-[130px] pointer-events-none -top-24 -right-24" />
               <div className="absolute w-[450px] h-[450px] rounded-full bg-blue-500/10 blur-[110px] pointer-events-none -bottom-24 -left-24" />
@@ -298,173 +360,219 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard 
                   <span className="w-10 h-10 rounded-xl bg-blue-600 text-white font-black flex items-center justify-center text-base shadow-lg shadow-blue-500/30">
                     Up
                   </span>
-                  <span className="text-xs uppercase tracking-widest font-bold text-slate-400">
-                    UPCONNECT · UPCONTA ERP
-                  </span>
-                  <span className="text-slate-600">·</span>
-                  <span className="text-xs font-semibold text-sky-400">
-                    Cierre Oficial 2026 · Actualizado
+                  <span className="text-xl font-bold tracking-tight text-white">
+                    UpConta <span className="text-emerald-400">/ ERP & Socios</span>
                   </span>
                 </div>
 
-                <div className="text-xs font-bold uppercase tracking-wider text-sky-400 pt-2">
-                  AUDITORÍA COMERCIAL Y GESTIÓN DE SOCIOS · {viewData.periodLabel.toUpperCase()}
+                <div className="space-y-3">
+                  <span className="text-xs uppercase tracking-widest font-extrabold text-emerald-400 px-3 py-1 rounded-full bg-emerald-950/60 border border-emerald-800/80">
+                    REPORTE 2 · AUDITORÍA DE SISTEMAS Y SOCIOS
+                  </span>
+                  {isEditMode ? (
+                    <input
+                      type="text"
+                      value={editValues['r2_cover_title'] !== undefined ? String(editValues['r2_cover_title']) : 'AUDITORÍA DE FACTURACIÓN Y RENDIMIENTO DE SOCIOS'}
+                      onChange={(e) => setEditValues({ ...editValues, r2_cover_title: e.target.value })}
+                      className="w-full text-2xl sm:text-4xl font-black text-center bg-slate-950 border border-emerald-500 rounded p-1 text-white"
+                    />
+                  ) : (
+                    <h1 className="text-3xl sm:text-5xl font-black text-white tracking-tight leading-tight">
+                      {editValues['r2_cover_title'] || 'AUDITORÍA DE FACTURACIÓN Y RENDIMIENTO DE SOCIOS'}
+                    </h1>
+                  )}
+                  {isEditMode ? (
+                    <input
+                      type="text"
+                      value={editValues['r2_cover_subtitle'] !== undefined ? String(editValues['r2_cover_subtitle']) : 'Análisis detallado de ventas por socio, ticket promedio, cruce de canales y conciliación de IVA'}
+                      onChange={(e) => setEditValues({ ...editValues, r2_cover_subtitle: e.target.value })}
+                      className="w-full text-xs text-center bg-slate-950 border border-emerald-500 rounded p-1 text-slate-300"
+                    />
+                  ) : (
+                    <p className="text-sm sm:text-base text-slate-300 max-w-2xl mx-auto">
+                      {editValues['r2_cover_subtitle'] || 'Análisis detallado de ventas por socio, ticket promedio, cruce de canales y conciliación de IVA'}
+                    </p>
+                  )}
                 </div>
 
-                <h1 className="text-3xl sm:text-5xl lg:text-6xl font-black tracking-tight text-white leading-tight">
-                  <span className="text-transparent bg-clip-text bg-gradient-to-r from-sky-400 to-emerald-400">
-                    {viewData.titleReport2}
-                  </span>
-                </h1>
+                {/* KPI Pill Grid */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-4 max-w-3xl mx-auto text-left">
+                  <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800">
+                    <div className="text-[11px] text-slate-400 font-semibold uppercase">VENTAS NETAS</div>
+                    <div className="text-xl font-black text-white tabular-nums">
+                      ${netSales.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </div>
+                    <div className="text-[10px] text-emerald-400 font-medium">100% Conciliado</div>
+                  </div>
+                  <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800">
+                    <div className="text-[11px] text-slate-400 font-semibold uppercase">CARTERA SOCIOS</div>
+                    <div className="text-xl font-black text-sky-400 tabular-nums">
+                      {activeSocios.length} Socios
+                    </div>
+                    <div className="text-[10px] text-slate-400 font-medium">Auditados</div>
+                  </div>
+                  <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800">
+                    <div className="text-[11px] text-slate-400 font-semibold uppercase">VENTAS CON IVA</div>
+                    <div className="text-xl font-black text-amber-400 tabular-nums">
+                      ${grossSales.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </div>
+                    <div className="text-[10px] text-slate-400 font-medium">IVA 15% Calculado</div>
+                  </div>
+                  <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800">
+                    <div className="text-[11px] text-slate-400 font-semibold uppercase">OPERACIONES</div>
+                    <div className="text-xl font-black text-emerald-400 tabular-nums">
+                      {activeSocios.reduce((a, s) => a + (s.operationsCount || 0), 0) || activeSocios.length}
+                    </div>
+                    <div className="text-[10px] text-slate-400 font-medium">Transacciones de Socios</div>
+                  </div>
+                </div>
 
-                <div className="pt-8 grid grid-cols-1 sm:grid-cols-3 gap-6 max-w-2xl mx-auto">
-                  <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-800">
-                    <div className="text-[11px] uppercase font-bold text-slate-400">FACTURACIÓN ACUMULADA</div>
-                    <div className="text-2xl font-black text-white tabular-nums mt-1">${netSales.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD</div>
-                  </div>
-                  <div className="p-4 rounded-xl bg-slate-900/80 border border-emerald-500/30">
-                    <div className="text-[11px] uppercase font-bold text-emerald-400">RÉCORD / CIERRE</div>
-                    <div className="text-2xl font-black text-emerald-400 tabular-nums mt-1">${netSales.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD</div>
-                  </div>
-                  <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-800">
-                    <div className="text-[11px] uppercase font-bold text-slate-400">TRANSACCIONES AUDITADAS</div>
-                    <div className="text-2xl font-black text-white tabular-nums mt-1">{viewData.totalCount || activeSocios.reduce((a, s) => a + (s.operationsCount || 0), 0) || 0} Operaciones</div>
-                  </div>
+                <div className="pt-2 text-xs text-slate-500">
+                  Período Activo: <strong className="text-slate-300">{viewData.periodLabel}</strong> · Fecha de Corte: <strong className="text-slate-300">{dataset.cutoffDate}</strong>
                 </div>
               </div>
 
               <div className="absolute bottom-4 left-8 right-8 flex justify-between items-center text-[11px] text-slate-500 border-t border-slate-800/60 pt-3">
-                <span>Auditoría de Socios Franquiciados y Contabilidad ERP · {viewData.subtitleDate}</span>
+                <span>UpConta ERP · Módulo de Control de Gestión</span>
                 <span>Pág. 01</span>
               </div>
             </div>
           )}
 
           {/* SLIDE 2: Balance General de Facturación 2026 */}
-          {currentSlide === 2 && (
+          {currentSlideDef.id === 'balance' && (
             <div className="h-full flex flex-col justify-between p-8 sm:p-12 relative bg-[#0c1322]">
               <div>
-                <span className="text-xs font-bold uppercase tracking-wider text-sky-400">
-                  RESUMEN GERENCIAL CONSOLIDADO
+                <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">
+                  AUDITORÍA FINANCIERA · {viewData.periodLabel.toUpperCase()}
                 </span>
-                <h2 className="text-2xl font-bold text-white tracking-tight mt-1">
+                <h2 className="text-2xl sm:text-3xl font-black text-white tracking-tight mt-0.5">
                   Balance General de Facturación 2026
                 </h2>
+                <p className="text-xs text-slate-400 mt-1">
+                  Desglose consolidado de ingresos netos, desglose impositivo IVA (15%) e ingreso bruto registrado
+                </p>
               </div>
 
-              {/* 4 Clean Metric Cards */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 my-auto">
-                {/* Net Sales */}
-                <div className="p-6 rounded-2xl bg-slate-900/90 border border-slate-800 shadow-xl flex flex-col justify-between">
-                  <div className="text-xs font-bold text-slate-400 uppercase">VENTAS NETAS (SIN IVA)</div>
-                  <div className="my-3">
-                    <div className="text-3xl font-black text-white tabular-nums">
-                      ${netSales.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                    </div>
-                    <div className="text-xs font-semibold text-emerald-400 mt-1">
-                      +26.0% vs corte previo ($4,265)
-                    </div>
+              {/* 3 Large KPI Cards matching Slide 2 of PDF 2 */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 my-auto">
+                <div className="p-6 rounded-2xl bg-slate-900/90 border border-slate-800 shadow-xl relative overflow-hidden">
+                  <div className="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center font-bold mb-4">
+                    $
                   </div>
-                  <div className="text-[10px] text-slate-500">Liquidación auditada</div>
+                  <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                    VENTAS NETAS (SIN IVA)
+                  </div>
+                  <div className="text-3xl sm:text-4xl font-black text-white tabular-nums mt-1">
+                    ${netSales.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </div>
+                  <p className="text-xs text-slate-400 mt-3 pt-3 border-t border-slate-800">
+                    Base imponible real correspondiente a los servicios y sistemas emitidos en el período.
+                  </p>
                 </div>
 
-                {/* Gross Sales */}
-                <div className="p-6 rounded-2xl bg-slate-900/90 border border-slate-800 shadow-xl flex flex-col justify-between">
-                  <div className="text-xs font-bold text-slate-400 uppercase">TOTAL FACTURADO (CON 15% IVA)</div>
-                  <div className="my-3">
-                    <div className="text-3xl font-black text-sky-400 tabular-nums">
-                      ${grossSales.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                    </div>
-                    <div className="text-xs font-medium text-slate-300 mt-1">
-                      IVA recaudado: ${ivaAmount.toFixed(2)} USD
-                    </div>
+                <div className="p-6 rounded-2xl bg-slate-900/90 border border-slate-800 shadow-xl relative overflow-hidden">
+                  <div className="w-10 h-10 rounded-xl bg-amber-500/10 text-amber-400 flex items-center justify-center font-bold mb-4">
+                    %
                   </div>
-                  <div className="text-[10px] text-slate-500">Tributación 15% vigente</div>
+                  <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                    IVA ESTIMADO (15%)
+                  </div>
+                  <div className="text-3xl sm:text-4xl font-black text-amber-400 tabular-nums mt-1">
+                    ${ivaAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </div>
+                  <p className="text-xs text-slate-400 mt-3 pt-3 border-t border-slate-800">
+                    Retención impositiva fiscal proyectada para la conciliación tributaria oficial.
+                  </p>
                 </div>
 
-                {/* Operations */}
-                <div className="p-6 rounded-2xl bg-slate-900/90 border border-slate-800 shadow-xl flex flex-col justify-between">
-                  <div className="text-xs font-bold text-slate-400 uppercase">OPERACIONES TOTALES</div>
-                  <div className="my-3">
-                    <div className="text-3xl font-black text-white tabular-nums">
-                      {activeSocios.reduce((a, s) => a + (s.operationsCount || 0), 0) || viewData.transactions.length || 0}
-                    </div>
-                    <div className="text-xs font-medium text-slate-300 mt-1">
-                      {activeSocios.length} socios registrados en cartera
-                    </div>
+                <div className="p-6 rounded-2xl bg-slate-900/90 border border-slate-800 shadow-xl relative overflow-hidden">
+                  <div className="w-10 h-10 rounded-xl bg-sky-500/10 text-sky-400 flex items-center justify-center font-bold mb-4">
+                    Σ
                   </div>
-                  <div className="text-[10px] text-slate-500">Transacciones comerciales</div>
-                </div>
-
-                {/* Monthly Record */}
-                <div className="p-6 rounded-2xl bg-slate-900/90 border border-emerald-500/40 shadow-xl flex flex-col justify-between">
-                  <div className="text-xs font-bold text-emerald-400 uppercase">VOLUMEN TOTAL ({viewData.periodLabel.toUpperCase()})</div>
-                  <div className="my-3">
-                    <div className="text-3xl font-black text-emerald-400 tabular-nums">
-                      ${netSales.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </div>
-                    <div className="text-xs font-medium text-emerald-300 mt-1">
-                      Cierre auditado de ventas
-                    </div>
+                  <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                    TOTAL FACTURADO CON IVA
                   </div>
-                  <div className="text-[10px] text-slate-500">Liquidación verificada</div>
+                  <div className="text-3xl sm:text-4xl font-black text-sky-400 tabular-nums mt-1">
+                    ${grossSales.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </div>
+                  <p className="text-xs text-slate-400 mt-3 pt-3 border-t border-slate-800">
+                    Recaudación bruta total esperada en cartera y cuentas por cobrar.
+                  </p>
                 </div>
               </div>
 
-              {/* Bottom banner */}
-              <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-800 flex items-center justify-between text-xs text-slate-300">
-                <div className="flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-sky-400" />
-                  <span>Base consolidada: Liquidación de comisiones de socios verificada e integrada al cierre de Septiembre.</span>
+              {/* Bottom Insight Bar */}
+              <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-800 text-xs text-slate-300 flex items-center justify-between">
+                <div>
+                  <strong className="text-emerald-400">Conclusión de Auditoría:</strong> El período{' '}
+                  <strong className="text-white">{viewData.periodLabel}</strong> registra un promedio diario de{' '}
+                  <strong className="text-white">
+                    ${((netSales / Math.max(1, viewData.totalCount)) || 0).toFixed(2)} USD
+                  </strong>{' '}
+                  por transacción sobre una cartera auditada de{' '}
+                  <strong className="text-sky-400">{activeSocios.length} socios comerciales</strong>.
                 </div>
-                <span className="text-slate-500 font-semibold">Canal Socios UpConnect</span>
+                <span className="text-slate-500">Corte: {dataset.cutoffDate}</span>
               </div>
             </div>
           )}
 
           {/* SLIDE 3: Evolución de Ventas Mes a Mes (Sin IVA) */}
-          {currentSlide === 3 && (
+          {currentSlideDef.id === 'monthly' && (
             <div className="h-full flex flex-col justify-between p-8 sm:p-12 relative bg-[#0c1322]">
               <div>
-                <span className="text-xs font-bold uppercase tracking-wider text-sky-400">
-                  HISTÓRICO AUDITADO
+                <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">
+                  TENDENCIA TEMPORAL · MATRIZ COMPARATIVA
                 </span>
-                <h2 className="text-2xl font-bold text-white tracking-tight mt-1">
+                <h2 className="text-2xl sm:text-3xl font-black text-white tracking-tight mt-0.5">
                   Evolución de Ventas Mes a Mes (Sin IVA)
                 </h2>
+                <p className="text-xs text-slate-400 mt-1">
+                  Comparativo de facturación neta mensual y peso relativo porcentual respecto al mes líder
+                </p>
               </div>
 
               {/* Horizontal Bar Chart matching Slide 3 of PDF 2 */}
-              <div className="space-y-3.5 my-auto max-w-4xl mx-auto w-full">
+              <div className="space-y-4 my-auto max-w-4xl w-full">
                 {auditMonthly.length === 0 ? (
-                  <div className="py-12 text-center text-slate-500 border border-dashed border-slate-800 rounded-xl max-w-2xl mx-auto px-6">
-                    <p className="font-semibold text-slate-400">Sin histórico de ventas mes a mes</p>
-                    <p className="text-xs text-slate-500 mt-1">
-                      Cargue el archivo de firmas o socios en el Dashboard para visualizar el histórico auditado.
-                    </p>
+                  <div className="py-12 text-center text-slate-500 text-sm">
+                    Sin datos mensuales registrados. Cargue la matriz de facturación en el Dashboard.
                   </div>
                 ) : (
-                  auditMonthly.map((m) => {
-                    const maxAudit = Math.max(100, ...auditMonthly.map((x) => x.amount));
-                    const pct = Math.max(6, (m.amount / maxAudit) * 100);
-
+                  auditMonthly.map((item, idx) => {
+                    const isLeader = item.total === maxAuditVal;
                     return (
-                      <div key={m.period} className="flex items-center gap-4">
-                        <div className="w-36 sm:w-44 text-right text-xs font-medium text-slate-300 shrink-0">
-                          {m.period}
+                      <div key={idx} className="space-y-1">
+                        <div className="flex justify-between items-center text-xs">
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-white uppercase w-28 tracking-wide">
+                              {item.month}
+                            </span>
+                            {isLeader && (
+                              <span className="text-[10px] px-2 py-0.2 rounded-full bg-emerald-500/20 text-emerald-300 font-semibold border border-emerald-500/40">
+                                Mes Líder en Ventas
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <span className="text-slate-400 text-[11px]">
+                              UP: ${item.upconnect.toFixed(2)} • CO: ${item.connectors.toFixed(2)}
+                            </span>
+                            <span className="font-black text-white tabular-nums text-sm">
+                              ${item.total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
+                            </span>
+                          </div>
                         </div>
 
-                        <div className="flex-1 bg-slate-900/80 rounded-lg h-7 overflow-hidden relative flex items-center">
+                        {/* Bar */}
+                        <div className="h-5 bg-slate-900 rounded-lg overflow-hidden border border-slate-800 p-0.5">
                           <div
-                            style={{ width: `${pct}%` }}
-                            className={`h-full ${m.isRecord ? 'bg-emerald-500' : 'bg-blue-600'} rounded-lg transition-all duration-500`}
+                            style={{ width: `${Math.max(4, (item.total / maxAuditVal) * 100)}%` }}
+                            className={`h-full rounded transition-all duration-500 ${
+                              isLeader ? 'bg-emerald-500' : 'bg-sky-500/80'
+                            }`}
                           />
-                        </div>
-
-                        <div className="w-28 text-left text-xs font-bold tabular-nums shrink-0">
-                          <span className={m.isRecord ? 'text-emerald-400 font-black' : 'text-slate-200'}>
-                            ${m.amount.toFixed(2)} USD
-                          </span>
                         </div>
                       </div>
                     );
@@ -472,337 +580,245 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard 
                 )}
               </div>
 
-              {/* Bottom footer text */}
-              <div className="p-3.5 rounded-xl bg-slate-900/90 border border-slate-800 text-xs text-slate-400 flex items-center justify-between">
+              {/* Bottom Insight */}
+              <div className="p-3.5 rounded-xl bg-slate-900/90 border border-slate-800 text-xs text-slate-300 flex items-center justify-between">
                 <div>
-                  <strong className="text-sky-400">Tendencia:</strong> Crecimiento sostenido desde Abril (+753% de expansión en 5 meses).
+                  <strong className="text-emerald-400">Total Acumulado Registrado:</strong>{' '}
+                  <strong className="text-white">
+                    ${auditMonthly.reduce((a, b) => a + b.total, 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
+                  </strong>
                 </div>
-                <span>Abril = Base Inicial de Comparativa</span>
+                <span className="text-slate-400">Canal Distribuidor Upconnect + Red Distribuidor Connect</span>
               </div>
             </div>
           )}
 
-          {/* SLIDE 4: Ranking General de Socios & Nueva Tabla Detallada */}
-          {currentSlide === 4 && (
-            <div className="h-full flex flex-col justify-between p-6 sm:p-10 relative bg-[#0c1322]">
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-800/80 pb-3">
+          {/* SLIDE 4: GRÁFICO PARETO Y CANALES EN UNA SOLA HOJA (SIN FILTRO DE MES) */}
+          {currentSlideDef.id === 'socios' && (
+            <div className="h-full flex flex-col justify-between p-6 sm:p-8 relative bg-[#0c1322]">
+              {/* Header: Exact and direct */}
+              <div className="flex items-center justify-between border-b border-slate-800/80 pb-2.5">
                 <div>
-                  <span className="text-xs font-bold uppercase tracking-wider text-sky-400">
-                    DESEMPEÑO INDIVIDUAL DE SOCIOS · {slide4MonthFilter === 'ALL' ? viewData.periodLabel.toUpperCase() : `MES DE ${slide4MonthFilter} 2026`}
+                  <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">
+                    AUDITORÍA & RENDIMIENTO DE SOCIOS · {viewData.periodLabel.toUpperCase()}
                   </span>
                   <h2 className="text-xl sm:text-2xl font-bold text-white tracking-tight mt-0.5">
-                    ¿Quién Vende Más?: Cartera y Rendimiento de Socios
+                    {editValues['r2_slide4_title'] || 'Desempeño de Socios: Gráfico Pareto & Distribución por Canales'}
                   </h2>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-3">
-                  {/* Month Filter Selector for Slide 4 */}
-                  {availableMonths.length > 0 && (
-                    <div className="flex items-center p-1 bg-slate-900 border border-slate-700/80 rounded-xl">
-                      <button
-                        onClick={() => setSlide4MonthFilter('ALL')}
-                        className={`px-2.5 py-1 text-xs font-bold rounded-lg transition-all ${
-                          slide4MonthFilter === 'ALL'
-                            ? 'bg-sky-600 text-white shadow-md'
-                            : 'text-slate-400 hover:text-white'
-                        }`}
-                      >
-                        Consolidado
-                      </button>
-                      {availableMonths.map((m) => (
-                        <button
-                          key={m}
-                          onClick={() => setSlide4MonthFilter(m)}
-                          className={`px-2.5 py-1 text-xs font-bold rounded-lg transition-all ${
-                            slide4MonthFilter === m
-                              ? 'bg-emerald-600 text-white shadow-md'
-                              : 'text-slate-400 hover:text-white'
-                          }`}
-                        >
-                          {m.charAt(0) + m.slice(1).toLowerCase()}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* View Mode Toggle: Tabla Detallada vs Gráfico Pareto vs Resumen Canales */}
-                  <div className="flex items-center p-1 bg-slate-900 border border-slate-700/80 rounded-xl">
-                    <button
-                      onClick={() => setSociosViewMode('table')}
-                      className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-all ${
-                        sociosViewMode === 'table'
-                          ? 'bg-emerald-600 text-white shadow-md'
-                          : 'text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      <Table className="w-3.5 h-3.5" />
-                      <span>Tabla Detallada</span>
-                    </button>
-                    <button
-                      onClick={() => setSociosViewMode('channels')}
-                      className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-all ${
-                        sociosViewMode === 'channels'
-                          ? 'bg-sky-600 text-white shadow-md'
-                          : 'text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      <Users className="w-3.5 h-3.5" />
-                      <span>Canales ({slide4SociosSummary.upconnect.count} UP / {slide4SociosSummary.connectors.count} CO)</span>
-                    </button>
-                    <button
-                      onClick={() => setSociosViewMode('pareto')}
-                      className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-all ${
-                        sociosViewMode === 'pareto'
-                          ? 'bg-blue-600 text-white shadow-md'
-                          : 'text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      <BarChart3 className="w-3.5 h-3.5" />
-                      <span>Gráfico Pareto</span>
-                    </button>
+                <div className="flex items-center gap-3 text-xs">
+                  <div className="bg-slate-900/90 px-3 py-1.5 rounded-lg border border-slate-800 text-slate-300 font-semibold">
+                    Cartera Total: <strong className="text-emerald-400">${activeSocios.reduce((a, s) => a + s.totalSales, 0).toLocaleString('en-US', { minimumFractionDigits: 2 })} USD</strong>
                   </div>
-
-                  {/* Search box for table */}
-                  {sociosViewMode === 'table' && slide4Socios.length > 5 && (
-                    <div className="relative">
-                      <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
-                      <input
-                        type="text"
-                        placeholder="Buscar socio, rol o plan..."
-                        value={socioSearch}
-                        onChange={(e) => setSocioSearch(e.target.value)}
-                        className="pl-8 pr-2.5 py-1 text-xs bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 w-44"
-                      />
-                    </div>
-                  )}
-
-                  <div className="text-xs font-semibold text-slate-300 bg-slate-900/90 px-3 py-1.5 rounded-lg border border-slate-800 flex items-center gap-2">
-                    <span>Cartera {slide4MonthFilter !== 'ALL' ? `(${slide4MonthFilter})` : ''}: <strong className="text-emerald-400 font-bold">${slide4Socios.reduce((a, s) => a + s.totalSales, 0).toLocaleString('en-US', { minimumFractionDigits: 2 })} USD</strong></span>
-                    <span className="text-slate-500">|</span>
-                    <span className="text-sky-400 font-bold">{slide4SociosSummary.upconnect.count} UpConnect</span>
-                    <span className="text-slate-500">·</span>
-                    <span className="text-amber-400 font-bold">{slide4SociosSummary.connectors.count} Connectors</span>
+                  <div className="bg-slate-900/90 px-3 py-1.5 rounded-lg border border-slate-800 text-slate-300 font-semibold">
+                    <span className="text-sky-400 font-bold">{viewData.sociosSummary.upconnect.count} Distribuidor Upconnect</span>
+                    <span className="text-slate-600 mx-1.5">|</span>
+                    <span className="text-amber-400 font-bold">{viewData.sociosSummary.connectors.count} Distribuidor Connect</span>
                   </div>
                 </div>
               </div>
 
-              {/* Empty state */}
-              {slide4Socios.length === 0 ? (
-                <div className="my-auto py-12 text-center text-slate-500 border border-dashed border-slate-800 rounded-xl max-w-2xl mx-auto px-6">
-                  <Users className="w-12 h-12 text-slate-700 mx-auto mb-2" />
-                  <p className="font-semibold text-slate-400">Sin cartera de socios registrada</p>
-                  <p className="text-xs text-slate-500 mt-1">
-                    Cargue el archivo de socios en el Dashboard para visualizar automáticamente la tabla detallada (ventas, ticket promedio, planes más vendidos y roles).
-                  </p>
-                </div>
-              ) : sociosViewMode === 'channels' ? (
-                /* RESUMEN POR CANALES: TABLITA ADICIONAL UPCONNECT VS CONNECTORS */
-                <div className="my-auto py-4">
-                  <SociosChannelTable
-                    summary={slide4SociosSummary}
-                    variant="slide"
-                    title={`Distribución y Cantidad de Socios por Canal · ${slide4MonthFilter === 'ALL' ? 'Consolidado General' : `Mes de ${slide4MonthFilter}`}`}
-                  />
-                </div>
-              ) : sociosViewMode === 'table' ? (
-                /* TABLA DETALLADA DE SOCIOS */
-                <div className="my-auto flex-1 flex flex-col justify-center py-2">
-                  <div className="border border-slate-800 rounded-xl overflow-hidden bg-slate-900/70 shadow-2xl">
-                    <div className="max-h-[380px] overflow-y-auto">
-                      <table className="w-full text-xs text-left">
-                        <thead className="bg-[#0b1220] text-slate-300 uppercase tracking-wider font-bold border-b border-slate-800 sticky top-0 z-10 text-[11px]">
-                          <tr>
-                            <th className="py-2.5 px-3 text-center w-12">#</th>
-                            <th className="py-2.5 px-3">Nombre del Socio</th>
-                            <th className="py-2.5 px-3">Rol</th>
-                            <th className="py-2.5 px-3 text-center">Ventas Realizadas</th>
-                            <th className="py-2.5 px-3 text-right">Monto Total de Venta</th>
-                            <th className="py-2.5 px-3 text-right">Ticket Promedio</th>
-                            <th className="py-2.5 px-3">Plan Más Vendido</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-800/70 text-slate-300">
-                          {slide4Socios
-                            .filter((s) => 
-                              !socioSearch || 
-                              s.name.toLowerCase().includes(socioSearch.toLowerCase()) ||
-                              (s.role && s.role.toLowerCase().includes(socioSearch.toLowerCase())) ||
-                              (s.topPlan && s.topPlan.toLowerCase().includes(socioSearch.toLowerCase()))
-                            )
-                            .map((s) => {
-                              const avgTicket = s.averageTicket ?? (s.operationsCount ? (s.totalSales / s.operationsCount) : s.totalSales);
-                              const isTop3 = s.rank <= 3;
-                              return (
-                                <tr key={s.rank} className="hover:bg-slate-800/40 transition-colors">
-                                  {/* Rank */}
-                                  <td className="py-2.5 px-3 text-center">
-                                    <span className={`inline-flex items-center justify-center w-6 h-6 rounded-md font-bold text-xs ${
-                                      s.rank === 1
-                                        ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-                                        : s.rank === 2
-                                        ? 'bg-slate-300/20 text-slate-200 border border-slate-300/40'
-                                        : s.rank === 3
-                                        ? 'bg-amber-700/20 text-amber-400 border border-amber-700/40'
-                                        : 'text-slate-500 font-mono'
-                                    }`}>
-                                      {s.rank}
-                                    </span>
-                                  </td>
-
-                                  {/* Nombre del Socio */}
-                                  <td className="py-2.5 px-3">
-                                    <div className="font-bold text-white flex items-center gap-1.5">
-                                      <span>{s.name}</span>
-                                      {s.rank === 1 && (
-                                        <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold">
-                                          Líder
-                                        </span>
-                                      )}
-                                    </div>
-                                  </td>
-
-                                  {/* Rol */}
-                                  <td className="py-2.5 px-3">
-                                    <span className={`px-2 py-0.5 rounded text-[10px] font-semibold border ${
-                                      (s.role || '').toLowerCase().includes('connect')
-                                        ? 'bg-blue-500/10 text-sky-300 border-blue-500/20'
-                                        : (s.role || '').toLowerCase().includes('vip') || (s.role || '').toLowerCase().includes('franquicia')
-                                        ? 'bg-purple-500/10 text-purple-300 border-purple-500/20'
-                                        : 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20'
-                                    }`}>
-                                      {s.role || 'Distribuidor Connect'}
-                                    </span>
-                                  </td>
-
-                                  {/* Cantidades Ventas Realizadas */}
-                                  <td className="py-2.5 px-3 text-center font-bold text-slate-200 tabular-nums">
-                                    {s.operationsCount || 1}
-                                  </td>
-
-                                  {/* Monto Total de Venta */}
-                                  <td className="py-2.5 px-3 text-right font-black text-emerald-400 tabular-nums">
-                                    ${s.totalSales.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
-                                  </td>
-
-                                  {/* Ticket Promedio */}
-                                  <td className="py-2.5 px-3 text-right font-bold text-sky-400 tabular-nums">
-                                    ${avgTicket.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
-                                  </td>
-
-                                  {/* Plan Más Vendido */}
-                                  <td className="py-2.5 px-3">
-                                    <span className="px-2 py-0.5 rounded text-[11px] bg-slate-800 text-slate-300 border border-slate-700 font-medium inline-block max-w-[220px] truncate" title={s.topPlan}>
-                                      {s.topPlan || 'Firma Electrónica (1 año)'}
-                                    </span>
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                        </tbody>
-                        <tfoot className="bg-[#080d19] border-t-2 border-slate-700 text-slate-200 font-bold text-xs sticky bottom-0">
-                          <tr>
-                            <td colSpan={3} className="py-2.5 px-3 text-left">
-                              TOTAL GENERAL ({slide4Socios.length} SOCIOS)
-                            </td>
-                            <td className="py-2.5 px-3 text-center text-white tabular-nums">
-                              {slide4Socios.reduce((a, s) => a + (s.operationsCount || 0), 0)} ventas
-                            </td>
-                            <td className="py-2.5 px-3 text-right text-emerald-400 font-black tabular-nums">
-                              ${slide4Socios.reduce((a, s) => a + s.totalSales, 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
-                            </td>
-                            <td className="py-2.5 px-3 text-right text-sky-400 font-black tabular-nums">
-                              ${(
-                                slide4Socios.reduce((a, s) => a + s.totalSales, 0) / 
-                                (slide4Socios.reduce((a, s) => a + (s.operationsCount || 0), 0) || 1)
-                              ).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
-                            </td>
-                            <td className="py-2.5 px-3 text-slate-400 font-normal text-[11px]">
-                              Ticket Promedio General
-                            </td>
-                          </tr>
-                        </tfoot>
-                      </table>
+              {/* Two side-by-side columns: LEFT: Pareto Chart, RIGHT: Canales Summary */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5 my-auto">
+                {/* 1. GRÁFICO PARETO TOP SOCIOS */}
+                <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-800 shadow-xl flex flex-col justify-between">
+                  <div className="flex items-center justify-between pb-2 border-b border-slate-800 mb-2">
+                    <div className="flex items-center gap-2">
+                      <BarChart3 className="w-4 h-4 text-emerald-400" />
+                      <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-300">
+                        Regla de Oro Pareto: Top 1–10 Socios
+                      </h3>
                     </div>
+                    <span className="text-[11px] text-slate-400 font-medium">Mayor Volumen Colocado</span>
                   </div>
-                </div>
-              ) : (
-                /* GRÁFICO PARETO TOP 1-10 vs 11-20 */
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8 my-auto">
-                  {/* TOP 1 - 10 */}
-                  <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-800">
-                    <div className="text-xs font-bold text-sky-400 uppercase tracking-wider mb-2">
-                      TOP 1 – 10: MAYOR VOLUMEN COLOCADO
+
+                  {activeSocios.length === 0 ? (
+                    <div className="py-8 text-center text-slate-500 text-xs">
+                      Sin datos de socios registrados
                     </div>
+                  ) : (
                     <div className="space-y-1.5">
-                      {slide4Socios.slice(0, 10).map((s) => {
-                        const maxVal = slide4Socios[0]?.totalSales || 1;
+                      {activeSocios.slice(0, 8).map((s) => {
+                        const maxVal = activeSocios[0]?.totalSales || 1;
                         const barWidth = Math.max(5, (s.totalSales / maxVal) * 100);
+                        const isTop1 = s.rank === 1;
+
+                        const nameKey = `socio_${s.rank}_name`;
+                        const salesKey = `socio_${s.rank}_sales`;
+                        const displayName = editValues[nameKey] !== undefined ? String(editValues[nameKey]) : s.name;
+                        const displaySales = editValues[salesKey] !== undefined ? Number(editValues[salesKey]) : s.totalSales;
+
                         return (
                           <div key={s.rank} className="flex items-center gap-2 text-xs">
-                            <span className="w-5 text-slate-500 font-bold tabular-nums">{s.rank}.</span>
-                            <span className="w-36 truncate font-medium text-slate-200" title={s.name}>
-                              {s.name}
+                            <span className={`w-5 font-bold tabular-nums text-center ${
+                              isTop1 ? 'text-amber-400 font-black' : s.rank <= 3 ? 'text-emerald-400' : 'text-slate-500'
+                            }`}>
+                              {s.rank}.
                             </span>
-                            <div className="flex-1 bg-slate-800/60 rounded h-4 overflow-hidden">
+
+                            {isEditMode ? (
+                              <input
+                                type="text"
+                                value={displayName}
+                                onChange={(e) => setEditValues({ ...editValues, [nameKey]: e.target.value })}
+                                className="w-32 bg-slate-950 border border-emerald-500 rounded px-1 text-xs text-white"
+                              />
+                            ) : (
+                              <span className="w-32 truncate font-semibold text-slate-200" title={displayName}>
+                                {displayName}
+                              </span>
+                            )}
+
+                            <span className={`text-[10px] px-1.5 py-0.2 rounded font-medium shrink-0 ${
+                              s.channel === 'UpConnect' ? 'bg-sky-500/10 text-sky-300 border border-sky-500/20' : 'bg-amber-500/10 text-amber-300 border border-amber-500/20'
+                            }`}>
+                              {s.channel || 'Connectors'}
+                            </span>
+
+                            <div className="flex-1 bg-slate-800/60 rounded h-3.5 overflow-hidden">
                               <div
                                 style={{ width: `${barWidth}%` }}
-                                className={`h-full ${s.rank === 1 ? 'bg-sky-400' : 'bg-blue-600'} rounded`}
+                                className={`h-full ${isTop1 ? 'bg-amber-400' : s.rank <= 3 ? 'bg-emerald-500' : 'bg-blue-600'} rounded`}
                               />
                             </div>
-                            <span className="w-20 text-right font-bold text-white tabular-nums">
-                              ${s.totalSales.toFixed(2)}
-                            </span>
+
+                            {isEditMode ? (
+                              <input
+                                type="number"
+                                step="any"
+                                value={displaySales}
+                                onChange={(e) => setEditValues({ ...editValues, [salesKey]: parseFloat(e.target.value) || 0 })}
+                                className="w-16 bg-slate-950 border border-emerald-500 rounded px-1 text-xs text-emerald-400 text-right font-bold"
+                              />
+                            ) : (
+                              <span className="w-20 text-right font-bold text-white tabular-nums">
+                                ${displaySales.toFixed(2)}
+                              </span>
+                            )}
                           </div>
                         );
                       })}
+                    </div>
+                  )}
+
+                  <div className="pt-2 mt-2 border-t border-slate-800 text-[11px] text-slate-400 flex items-center justify-between">
+                    <span>Concentración Top 5:</span>
+                    <strong className="text-emerald-400">
+                      {activeSocios.length > 0
+                        ? ((activeSocios.slice(0, 5).reduce((a, b) => a + b.totalSales, 0) / (activeSocios.reduce((a, b) => a + b.totalSales, 0) || 1)) * 100).toFixed(1)
+                        : '0.0'}% de la recaudación
+                    </strong>
+                  </div>
+                </div>
+
+                {/* 2. RESUMEN POR CANALES (UPCONNECT VS CONNECTORS) */}
+                <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-800 shadow-xl flex flex-col justify-between">
+                  <div className="flex items-center justify-between pb-2 border-b border-slate-800 mb-2">
+                    <div className="flex items-center gap-2">
+                      <Users className="w-4 h-4 text-sky-400" />
+                      <h3 className="text-xs font-bold uppercase tracking-wider text-sky-300">
+                        Distribución y Volumen por Canal
+                      </h3>
+                    </div>
+                    <span className="text-[11px] text-slate-400 font-medium">Distribuidor Upconnect vs Distribuidor Connect</span>
+                  </div>
+
+                  {/* Channel Comparison Cards */}
+                  <div className="grid grid-cols-2 gap-3 mb-3">
+                    {/* UpConnect */}
+                    <div className="p-3 rounded-xl bg-slate-950/80 border-t-2 border-sky-500 border-x border-b border-slate-800">
+                      <div className="flex items-center gap-1.5 text-xs font-bold text-sky-400 mb-1">
+                        <Zap className="w-3.5 h-3.5" />
+                        <span>Distribuidor Upconnect</span>
+                      </div>
+                      <div className="text-xl font-black text-white tabular-nums">
+                        ${viewData.sociosSummary.upconnect.totalSales.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                      </div>
+                      <div className="text-[11px] text-slate-400 mt-1 flex justify-between">
+                        <span>{viewData.sociosSummary.upconnect.count} Socios</span>
+                        <span className="font-bold text-sky-300">{viewData.sociosSummary.upconnect.percentage}%</span>
+                      </div>
+                      <div className="text-[10px] text-slate-500 mt-0.5">
+                        Ticket Promedio: ${viewData.sociosSummary.upconnect.averageTicket.toFixed(2)} USD
+                      </div>
+                    </div>
+
+                    {/* Connect */}
+                    <div className="p-3 rounded-xl bg-slate-950/80 border-t-2 border-amber-500 border-x border-b border-slate-800">
+                      <div className="flex items-center gap-1.5 text-xs font-bold text-amber-400 mb-1">
+                        <Share2 className="w-3.5 h-3.5" />
+                        <span>Distribuidor Connect Aliados</span>
+                      </div>
+                      <div className="text-xl font-black text-white tabular-nums">
+                        ${viewData.sociosSummary.connectors.totalSales.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                      </div>
+                      <div className="text-[11px] text-slate-400 mt-1 flex justify-between">
+                        <span>{viewData.sociosSummary.connectors.count} Socios</span>
+                        <span className="font-bold text-amber-300">{viewData.sociosSummary.connectors.percentage}%</span>
+                      </div>
+                      <div className="text-[10px] text-slate-500 mt-0.5">
+                        Ticket Promedio: ${viewData.sociosSummary.connectors.averageTicket.toFixed(2)} USD
+                      </div>
                     </div>
                   </div>
 
-                  {/* TOP 11 - 20 */}
-                  <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-800">
-                    <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">
-                      TOP 11 – 20: PENETRACIÓN Y RED BASE
+                  {/* Split Bar */}
+                  <div className="space-y-1 mb-2">
+                    <div className="flex justify-between text-[11px] font-semibold">
+                      <span className="text-sky-400">Distribuidor Upconnect: {viewData.sociosSummary.upconnect.percentage}%</span>
+                      <span className="text-amber-400">Distribuidor Connect: {viewData.sociosSummary.connectors.percentage}%</span>
                     </div>
-                    <div className="space-y-1.5">
-                      {slide4Socios.slice(10, 20).map((s) => {
-                        const maxSub = slide4Socios[10]?.totalSales || 1;
-                        const barWidth = Math.max(5, (s.totalSales / maxSub) * 100);
-                        return (
-                          <div key={s.rank} className="flex items-center gap-2 text-xs">
-                            <span className="w-5 text-slate-500 font-bold tabular-nums">{s.rank}.</span>
-                            <span className="w-36 truncate font-medium text-slate-200" title={s.name}>
-                              {s.name}
-                            </span>
-                            <div className="flex-1 bg-slate-800/60 rounded h-4 overflow-hidden">
-                              <div
-                                style={{ width: `${barWidth}%` }}
-                                className="h-full bg-slate-500 rounded"
-                              />
-                            </div>
-                            <span className="w-20 text-right font-bold text-slate-300 tabular-nums">
-                              ${s.totalSales.toFixed(2)}
-                            </span>
-                          </div>
-                        );
-                      })}
+                    <div className="h-3 w-full bg-slate-800 rounded-full overflow-hidden flex">
+                      <div
+                        style={{ width: `${viewData.sociosSummary.upconnect.percentage}%` }}
+                        className="h-full bg-sky-500 transition-all"
+                      />
+                      <div
+                        style={{ width: `${viewData.sociosSummary.connectors.percentage}%` }}
+                        className="h-full bg-amber-500 transition-all"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Channel Summary Table */}
+                  <div className="border border-slate-800 rounded-lg overflow-hidden bg-slate-950/60 text-[11px]">
+                    <div className="grid grid-cols-4 bg-slate-900/90 font-bold text-slate-400 p-1.5 border-b border-slate-800 text-center">
+                      <span>Canal</span>
+                      <span>Socios</span>
+                      <span>Ventas</span>
+                      <span>Total USD</span>
+                    </div>
+                    <div className="grid grid-cols-4 p-1.5 border-b border-slate-800/60 text-center text-slate-200">
+                      <span className="font-bold text-sky-400">UpConnect</span>
+                      <span>{viewData.sociosSummary.upconnect.count}</span>
+                      <span>{viewData.sociosSummary.upconnect.operationsCount}</span>
+                      <span className="font-bold text-emerald-400">${viewData.sociosSummary.upconnect.totalSales.toFixed(2)}</span>
+                    </div>
+                    <div className="grid grid-cols-4 p-1.5 text-center text-slate-200">
+                      <span className="font-bold text-amber-400">Connectors</span>
+                      <span>{viewData.sociosSummary.connectors.count}</span>
+                      <span>{viewData.sociosSummary.connectors.operationsCount}</span>
+                      <span className="font-bold text-emerald-400">${viewData.sociosSummary.connectors.totalSales.toFixed(2)}</span>
                     </div>
                   </div>
                 </div>
-              )}
+              </div>
 
-              {/* Callout Footer */}
-              <div className="p-3 rounded-xl bg-slate-900/90 border border-slate-800 text-xs text-slate-300 flex flex-col sm:flex-row items-center justify-between gap-2">
+              {/* Footer Callout */}
+              <div className="p-3 rounded-xl bg-slate-900/90 border border-slate-800 text-xs text-slate-300 flex items-center justify-between">
                 <div>
-                  <strong className="text-sky-400">Concentración Pareto:</strong> El Top 5 representa el{' '}
+                  <strong className="text-emerald-400">Total Auditado en Socios:</strong>{' '}
                   <strong className="text-white">
-                    {slide4Socios.length > 0
-                      ? ((slide4Socios.slice(0, 5).reduce((a, b) => a + b.totalSales, 0) / (slide4Socios.reduce((a, b) => a + b.totalSales, 0) || 1)) * 100).toFixed(1)
-                      : '0.0'}%
-                  </strong> del total facturado por socios.
+                    ${activeSocios.reduce((a, s) => a + s.totalSales, 0).toLocaleString('en-US', { minimumFractionDigits: 2 })} USD
+                  </strong>{' '}
+                  distribuidos en{' '}
+                  <strong className="text-sky-300">{viewData.sociosSummary.totalSociosCount} socios registrados</strong> con{' '}
+                  <strong className="text-white">{viewData.sociosSummary.totalOperationsCount} transacciones conciliadas</strong>.
                 </div>
-                {slide4Socios.length > 0 && (
+                {activeSocios.length > 0 && (
                   <div className="text-amber-400 font-bold">
-                    Líder en Ventas: {slide4Socios[0]?.name} (${slide4Socios[0]?.totalSales.toFixed(2)} USD · {slide4Socios[0]?.role || 'Distribuidor Connect'})
+                    Líder: {activeSocios[0]?.name} (${activeSocios[0]?.totalSales.toFixed(2)} USD)
                   </div>
                 )}
               </div>
@@ -810,128 +826,131 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard 
           )}
 
           {/* SLIDE 5: Foco de Rendimiento Mensual: Desglose Semana a Semana */}
-          {currentSlide === 5 && (
+          {currentSlideDef.id === 'weekly' && (
             <div className="h-full flex flex-col justify-between p-8 sm:p-12 relative bg-[#0c1322]">
               <div>
-                <span className="text-xs font-bold uppercase tracking-wider text-sky-400">
-                  FOCO DE RENDIMIENTO MENSUAL
+                <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">
+                  FOCO SEMANAL · AUDITORÍA DETALLADA
                 </span>
-                <h2 className="text-2xl font-bold text-white tracking-tight mt-1">
-                  {viewData.periodLabel}: Desglose Semana a Semana
+                <h2 className="text-2xl sm:text-3xl font-black text-white tracking-tight mt-0.5">
+                  Foco de Rendimiento: Desglose Semana a Semana
                 </h2>
+                <p className="text-xs text-slate-400 mt-1">
+                  Distribución exacta de facturación por semana acorde a las fechas del período activo ({viewData.periodLabel})
+                </p>
               </div>
 
-              {/* 4 Week Cards */}
-              {dataset.weeklyBreakdownType2.length === 0 ? (
-                <div className="my-auto py-12 text-center text-slate-500 border border-dashed border-slate-800 rounded-xl max-w-2xl mx-auto px-6">
-                  <p className="font-semibold text-slate-400">Sin desglose semanal registrado</p>
-                  <p className="text-xs text-slate-500 mt-1">
-                    Cargue el archivo de firmas o socios en el Dashboard para visualizar el rendimiento semana a semana.
-                  </p>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 my-auto">
-                  {dataset.weeklyBreakdownType2.map((wb, idx) => {
-                    const isWeek4 = idx === 3;
+              {/* 4 Weekly KPI Cards */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 my-auto">
+                {activeWeekly.length === 0 ? (
+                  <div className="col-span-4 py-8 text-center text-slate-500 text-sm">
+                    Sin desglose semanal disponible para el período actual.
+                  </div>
+                ) : (
+                  activeWeekly.map((w, idx) => {
+                    const wKey = `r2_week_${idx}_amount`;
+                    const currentAmt = editValues[wKey] !== undefined ? Number(editValues[wKey]) : w.amount;
+
                     return (
-                      <div
-                        key={wb.weekName}
-                        className={`p-6 rounded-2xl bg-slate-900/90 border flex flex-col justify-between shadow-xl ${
-                          isWeek4 ? 'border-emerald-500/60 shadow-emerald-950/40' : 'border-slate-800'
-                        }`}
-                      >
+                      <div key={idx} className="p-4 rounded-xl bg-slate-900/90 border border-slate-800 shadow-xl flex flex-col justify-between">
                         <div>
-                          <div className="text-[11px] font-bold text-slate-400 uppercase">
-                            {wb.weekName} ({wb.dateRange})
+                          <div className="flex items-center justify-between text-xs mb-1">
+                            <span className="font-bold text-sky-400">{w.weekName}</span>
+                            <span className="text-[11px] text-slate-400">{w.dateRange}</span>
                           </div>
-                          <div className={`text-3xl font-black tabular-nums my-3 ${isWeek4 ? 'text-emerald-400' : 'text-white'}`}>
-                            ${wb.amount.toFixed(2)}
+                          <div className="text-2xl font-black text-white tabular-nums my-1">
+                            {isEditMode ? (
+                              <div className="flex items-center gap-1">
+                                <span className="text-xs text-slate-400">$</span>
+                                <input
+                                  type="number"
+                                  step="any"
+                                  value={currentAmt}
+                                  onChange={(e) => setEditValues({ ...editValues, [wKey]: parseFloat(e.target.value) || 0 })}
+                                  className="w-24 bg-slate-950 border border-emerald-500 rounded px-1.5 py-0.5 text-xs text-emerald-400 font-bold"
+                                />
+                              </div>
+                            ) : (
+                              `$${w.amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                            )}
                           </div>
-                          <div className="text-xs font-semibold text-slate-300 mb-3">
-                            {wb.percentage}% del mes
-                          </div>
+                          <div className="text-xs font-semibold text-emerald-400">{w.percentage}% del total</div>
                         </div>
 
-                        <p className="text-xs text-slate-400 border-t border-slate-800/80 pt-3 leading-relaxed">
-                          {wb.description}
-                        </p>
+                        <div className="pt-3 border-t border-slate-800 text-[11px] text-slate-400">
+                          {w.description || 'Emisiones registradas'}
+                        </div>
                       </div>
                     );
-                  })}
-                </div>
-              )}
+                  })
+                )}
+              </div>
 
-              {/* Bottom black bar */}
-              <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between text-xs">
-                <span className="text-slate-400 font-semibold">
-                  Total Auditado ({dataset.weeklyBreakdownType2.reduce((acc, w) => acc + (w.operationsCount || 0), 0) || viewData.totalCount} Operaciones Verificadas):
-                </span>
-                <span className="text-xl font-black text-sky-400 tabular-nums">
-                  ${netSales.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
-                </span>
+              {/* Bottom Insight */}
+              <div className="p-3.5 rounded-xl bg-slate-900/90 border border-slate-800 text-xs text-slate-300 flex items-center justify-between">
+                <div>
+                  <strong className="text-emerald-400">Total Semanal Auditado:</strong>{' '}
+                  <strong className="text-white">
+                    ${totalWeeklySales.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
+                  </strong>{' '}
+                  (Consistente al 100% con la facturación de sistemas por socio).
+                </div>
+                <span className="text-slate-400">{activeWeekly.length} semanas auditadas</span>
               </div>
             </div>
           )}
 
           {/* SLIDE 6: Ventas por Categoría de Solución */}
-          {currentSlide === 6 && (
+          {currentSlideDef.id === 'solutions' && (
             <div className="h-full flex flex-col justify-between p-8 sm:p-12 relative bg-[#0c1322]">
               <div>
-                <span className="text-xs font-bold uppercase tracking-wider text-sky-400">
-                  ESTRUCTURA DE PORTAFOLIO
+                <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">
+                  CATÁLOGO COMERCIAL · {viewData.periodLabel.toUpperCase()}
                 </span>
-                <h2 className="text-2xl font-bold text-white tracking-tight mt-1">
-                  Ventas por Categoría de Solución
+                <h2 className="text-2xl sm:text-3xl font-black text-white tracking-tight mt-0.5">
+                  Ventas por Categoría de Solución UpConta
                 </h2>
+                <p className="text-xs text-slate-400 mt-1">
+                  Distribución de ingresos según planes de suscripción ERP y productos contratados
+                </p>
               </div>
 
-              {/* 3 Large Solution Cards */}
-              {dataset.solutionCategories.length === 0 ? (
-                <div className="my-auto py-12 text-center text-slate-500 border border-dashed border-slate-800 rounded-xl max-w-2xl mx-auto px-6">
-                  <p className="font-semibold text-slate-400">Sin categorías de solución registradas</p>
-                  <p className="text-xs text-slate-500 mt-1">
-                    Cargue el archivo de firmas o socios en el Dashboard para desglosar las ventas por solución o plan.
-                  </p>
-                </div>
-              ) : (
-                <div className={`grid gap-4 sm:gap-5 my-auto ${
-                  dataset.solutionCategories.length === 4
-                    ? 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-4'
-                    : dataset.solutionCategories.length > 4
-                    ? 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3'
-                    : 'grid-cols-1 md:grid-cols-3'
-                }`}>
-                  {dataset.solutionCategories.map((cat) => (
-                    <div
-                      key={cat.id}
-                      className="p-6 rounded-2xl bg-slate-900/90 border border-slate-800 shadow-xl flex flex-col justify-between"
-                    >
+              {/* 3 Categories Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 my-auto">
+                {activeCategories.length === 0 ? (
+                  <div className="col-span-3 py-10 text-center text-slate-500 text-sm">
+                    Sin categorías de solución registradas.
+                  </div>
+                ) : (
+                  activeCategories.map((cat, idx) => (
+                    <div key={idx} className="p-6 rounded-2xl bg-slate-900/90 border border-slate-800 shadow-xl flex flex-col justify-between">
                       <div>
-                        <span className="text-[11px] font-bold text-sky-400 uppercase tracking-wider">
-                          {cat.badge}
-                        </span>
-                        <h3 className="text-lg font-bold text-white mt-1 mb-3">{cat.title}</h3>
-
-                        <div className="text-3xl font-black text-sky-400 tabular-nums">
-                          ${cat.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                        <div className="flex items-center justify-between text-xs mb-2">
+                          <span className="font-bold text-sky-400 uppercase tracking-wider text-[11px]">{cat.badge || 'Categoría'}</span>
+                          <span className="font-bold text-white bg-slate-800 px-2 py-0.5 rounded text-[11px]">
+                            {cat.percentage}%
+                          </span>
                         </div>
-                        <div className="text-xs font-semibold text-slate-300 mt-1 mb-4">
-                          {cat.percentage}% del total facturado
+                        <h3 className="text-base font-bold text-white">{cat.title}</h3>
+                        <div className="text-2xl font-black text-emerald-400 tabular-nums my-2">
+                          ${cat.amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </div>
+                        <p className="text-xs text-slate-400">{cat.plansDescription}</p>
                       </div>
 
-                      <p className="text-xs text-slate-400 border-t border-slate-800 pt-3 leading-relaxed">
-                        {cat.plansDescription}
-                      </p>
+                      <div className="pt-3 border-t border-slate-800 text-[11px] text-slate-400 flex items-center justify-between">
+                        <span>Participación:</span>
+                        <strong className="text-slate-200">{cat.percentage}% de ventas</strong>
+                      </div>
                     </div>
-                  ))}
-                </div>
-              )}
+                  ))
+                )}
+              </div>
 
-              {/* Bottom callout */}
+              {/* Bottom Callout */}
               <div className="p-3.5 rounded-xl bg-slate-900/90 border border-slate-800 text-xs text-slate-300 flex items-center justify-between">
                 <div>
-                  <strong className="text-sky-400">Estrategia de Socios:</strong> Foco en tickets medianos y altos (ERP + Planes Contador representan el 88.5% del ingreso).
+                  <strong className="text-emerald-400">Estrategia de Socios:</strong> Foco en tickets medianos y altos (ERP + Planes Contador representan la mayor recaudación).
                 </div>
                 <span className="text-emerald-400 font-bold">Alta Retención</span>
               </div>
@@ -939,17 +958,17 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard 
           )}
 
           {/* SLIDE 7: Canal de Distribución - Embudo de Socios */}
-          {currentSlide === 7 && (
+          {currentSlideDef.id === 'funnel' && (
             <div className="h-full flex flex-col justify-between p-6 sm:p-8 relative bg-[#0c1322]">
               <div>
-                <span className="text-xs font-bold uppercase tracking-wider text-sky-400">
+                <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">
                   CANAL DE DISTRIBUCIÓN · {viewData.periodLabel.toUpperCase()}
                 </span>
                 <h2 className="text-xl sm:text-2xl font-bold text-white tracking-tight mt-0.5">
                   Embudo de Socios y Comunidades Activas
                 </h2>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  Conteo cuantitativo de socios, franquiciados UpConta y red de distribuidores Connectors
+                  Conteo cuantitativo de socios, franquiciados UpConta y red de distribuidores Connect
                 </p>
               </div>
 
@@ -965,7 +984,7 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard 
                     <div className="text-3xl font-black text-sky-400 tabular-nums my-1">
                       {viewData.sociosSummary.upconnect.count}
                     </div>
-                    <div className="text-[11px] font-semibold text-slate-400 mb-1">Socios UpConnect Directo</div>
+                    <div className="text-[11px] font-semibold text-slate-400 mb-1">Socios Distribuidor Upconnect</div>
                   </div>
                   <p className="text-[11px] text-slate-400 border-t border-slate-800 pt-2">
                     Red principal de contadores y socios directos UpConnect.
@@ -973,7 +992,7 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard 
                 </div>
 
                 {/* Stage 2 (Hero highlighted) */}
-                <div className="p-4 rounded-xl bg-slate-900/95 border-2 border-sky-500 shadow-xl shadow-sky-950/50 flex flex-col justify-between text-center relative">
+                <div className="p-4 rounded-xl bg-slate-900/95 border-2 border-emerald-500 shadow-xl shadow-emerald-950/50 flex flex-col justify-between text-center relative">
                   <div>
                     <div className="w-10 h-10 rounded-xl bg-purple-600/20 text-purple-400 font-bold flex items-center justify-center mx-auto mb-2">
                       👑
@@ -982,10 +1001,10 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard 
                     <div className="text-3xl font-black text-white tabular-nums my-1">
                       {viewData.sociosSummary.connectors.count}
                     </div>
-                    <div className="text-[11px] font-semibold text-purple-400 mb-1">Socios Connectors Aliados</div>
+                    <div className="text-[11px] font-semibold text-purple-400 mb-1">Socios Distribuidor Connect Aliados</div>
                   </div>
                   <p className="text-[11px] text-slate-300 border-t border-slate-800 pt-2">
-                    Contadores activos y red externa de distribución Connectors.
+                    Contadores activos y red externa de distribución Connect.
                   </p>
                 </div>
 
@@ -1007,19 +1026,19 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard 
                 </div>
               </div>
 
-              {/* TABLA ADICIONAL: Cantidad de Socios UpConnect vs Connectors */}
+              {/* TABLA ADICIONAL: Cantidad de Socios Distribuidor Upconnect vs Distribuidor Connect */}
               <div className="my-1">
                 <SociosChannelTable
                   summary={viewData.sociosSummary}
                   variant="slide"
-                  title="Distribución y Cantidad de Socios por Canal: UpConnect vs Connectors"
+                  title="Distribución y Cantidad de Socios por Canal: Distribuidor Upconnect vs Distribuidor Connect"
                 />
               </div>
 
               {/* Bottom callout */}
               <div className="p-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-xs text-slate-300 flex items-center justify-between">
                 <div>
-                  <strong className="text-sky-400">Total Cartera Auditada:</strong> {viewData.sociosSummary.totalSociosCount} socios registrados ({viewData.sociosSummary.upconnect.count} UpConnect / {viewData.sociosSummary.connectors.count} Connectors) con {viewData.sociosSummary.totalOperationsCount} ventas conciliadas por ${viewData.sociosSummary.totalSales.toLocaleString('en-US', { minimumFractionDigits: 2 })} USD.
+                  <strong className="text-emerald-400">Total Cartera Auditada:</strong> {viewData.sociosSummary.totalSociosCount} socios registrados ({viewData.sociosSummary.upconnect.count} Distribuidor Upconnect / {viewData.sociosSummary.connectors.count} Distribuidor Connect) con {viewData.sociosSummary.totalOperationsCount} ventas conciliadas por ${viewData.sociosSummary.totalSales.toLocaleString('en-US', { minimumFractionDigits: 2 })} USD.
                 </div>
                 <span className="text-emerald-400 font-bold">100% Conciliado con Base Excel</span>
               </div>
@@ -1027,14 +1046,14 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard 
           )}
 
           {/* SLIDE 8: Siguiente Fase: Cruce Comercial */}
-          {currentSlide === 8 && (
+          {currentSlideDef.id === 'cross' && (
             <div className="h-full flex flex-col justify-center items-center text-center p-8 sm:p-16 relative bg-gradient-to-br from-[#0c1322] via-[#080d19] to-[#040812]">
               <div className="z-10 max-w-2xl space-y-6">
-                <div className="w-12 h-12 rounded-2xl bg-sky-500 text-white flex items-center justify-center mx-auto shadow-lg shadow-sky-500/30">
+                <div className="w-12 h-12 rounded-2xl bg-emerald-500 text-white flex items-center justify-center mx-auto shadow-lg shadow-emerald-500/30">
                   <Activity className="w-6 h-6" />
                 </div>
 
-                <div className="text-xs font-bold uppercase tracking-wider text-sky-400">
+                <div className="text-xs font-bold uppercase tracking-wider text-emerald-400">
                   SIGUIENTE FASE: CRUCE COMERCIAL
                 </div>
 
@@ -1045,7 +1064,7 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard 
                 <div className="space-y-2 py-4 text-base font-semibold text-slate-300">
                   <div>VENTAS EQUIPO COMERCIAL: <strong className="text-white">${dataset.commercialCross?.commercialTeamSales ? dataset.commercialCross.commercialTeamSales.toLocaleString('en-US', { minimumFractionDigits: 2 }) : '0.00'}</strong></div>
                   <div>VENTAS ORGÁNICAS: <strong className="text-white">${dataset.commercialCross?.organicSales ? dataset.commercialCross.organicSales.toLocaleString('en-US', { minimumFractionDigits: 2 }) : '0.00'}</strong></div>
-                  <div>VENTAS SOCIOS: <strong className="text-sky-400">${(dataset.commercialCross?.partnersSales || netSales).toLocaleString('en-US', { minimumFractionDigits: 2 })}</strong></div>
+                  <div>VENTAS SOCIOS: <strong className="text-emerald-400">${(dataset.commercialCross?.partnersSales || netSales).toLocaleString('en-US', { minimumFractionDigits: 2 })}</strong></div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-8 pt-6 border-t border-slate-800/80 max-w-lg mx-auto">
@@ -1073,6 +1092,42 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard 
 
         </div>
       </div>
+
+      {/* MODAL: Mover y Reorganizar Diapositivas */}
+      <ReorderSlidesModal
+        isOpen={isReorderModalOpen}
+        onClose={() => setIsReorderModalOpen(false)}
+        slides={activeSlides.map((s) => ({
+          id: s.id,
+          title: s.title,
+          subtitle: s.subtitle,
+        }))}
+        reportTitle="Reporte 2: Auditoría & Venta de Sistemas por Socio"
+        onSaveOrder={(newOrder) => {
+          if (onUpdateDataset) {
+            onUpdateDataset({ customSlideOrder2: newOrder });
+          }
+        }}
+        onResetDefault={() => {
+          if (onUpdateDataset) {
+            onUpdateDataset({ customSlideOrder2: [] });
+          }
+        }}
+      />
+
+      {/* MODAL: Editor de Diapositiva */}
+      <SlideEditorModal
+        isOpen={isEditorModalOpen}
+        onClose={() => setIsEditorModalOpen(false)}
+        reportType={2}
+        slideId={currentSlideDef.id}
+        slideTitle={currentSlideDef.title}
+        viewData={viewData}
+        dataset={dataset}
+        editValues={editValues}
+        onChangeValue={(key, val) => setEditValues((prev) => ({ ...prev, [key]: val }))}
+        onSave={handleSaveAllChanges}
+      />
     </div>
   );
 };

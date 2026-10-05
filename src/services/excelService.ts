@@ -365,6 +365,13 @@ export const parseFlexibleNumber = (raw: any): number => {
  * Requerimiento de usuario: "el valor tomalo de la columna bh, pero hazlo bien, son valores en dolares ecuatorianos, trae la info que es, hazlo bien".
  */
 export const EXCEL_COL_BH_INDEX = 59;
+export const EXCEL_COL_AI_INDEX = 34; // Columna AI: Tipo de firma
+export const EXCEL_COL_AK_INDEX = 36; // Columna AK: Vigencia / Duración de la firma
+/**
+ * Columna CB en Excel corresponde al índice 79 (0-indexed, 80va columna en la cuadrícula).
+ * Requerimiento de usuario: "En el reporte 1, en la diapositiva 2 debes calcular 2 cosas Distribuidor Connect y Upconnect, que eso esta en la celda CB del excel que se carga, cambia los nombres y actuliaza los valores, y la cantidad; cambia solo lo que te pido".
+ */
+export const EXCEL_COL_CB_INDEX = 79; // Columna CB: Clasificación de Canal / Distribuidor ("Distribuidor Connect" vs "Upconnect")
 
 export const parseEcuadorianDollarValue = (val: any): number => {
   if (val === null || val === undefined) return 0;
@@ -423,34 +430,98 @@ export const parseEcuadorianDollarValue = (val: any): number => {
 };
 
 // Universal flexible date parser
-export const parseExcelDate = (rawDate: any): string => {
+export const parseExcelDate = (rawDate: any, hintMonth?: number, hintYear?: number): string => {
   if (!rawDate) return '2026-09-01';
+
+  // 1. JavaScript Date object (read local calendar parts to prevent timezone date-shift)
   if (rawDate instanceof Date && !isNaN(rawDate.getTime())) {
-    return rawDate.toISOString().split('T')[0];
+    const y = rawDate.getFullYear() || hintYear || 2026;
+    const m = String(rawDate.getMonth() + 1).padStart(2, '0');
+    const d = String(rawDate.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
   }
-  // Excel serial number (e.g. 46267)
+
+  // 2. Excel numeric serial number (e.g. 46267)
   if (typeof rawDate === 'number' && rawDate > 20000 && rawDate < 60000) {
-    const d = new Date(Math.round((rawDate - 25569) * 86400 * 1000));
-    if (!isNaN(d.getTime())) {
-      return d.toISOString().split('T')[0];
+    try {
+      const parsed = XLSX.SSF.parse_date_code(rawDate);
+      if (parsed && parsed.m >= 1 && parsed.m <= 12 && parsed.d >= 1) {
+        const y = parsed.y || hintYear || 2026;
+        const m = String(parsed.m).padStart(2, '0');
+        const d = String(parsed.d).padStart(2, '0');
+        return `${y}-${m}-${d}`;
+      }
+    } catch {
+      // fallback
     }
   }
 
-  const str = String(rawDate).trim();
+  // 3. String representation
+  const rawStr = String(rawDate).trim();
+  if (!rawStr) return '2026-09-01';
+
+  // Strip time component if present e.g. "2026-09-15 14:30:00" -> "2026-09-15"
+  const str = rawStr.split(/\s+/)[0];
+
   // If already YYYY-MM-DD or YYYY/MM/DD
   if (/^\d{4}[-/]\d{1,2}[-/]\d{1,2}$/.test(str)) {
     const parts = str.split(/[-/]/);
-    return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
-  }
-  // If DD/MM/YYYY or D/M/YY
-  if (/^\d{1,2}[-/]\d{1,2}[-/]\d{2,4}$/.test(str)) {
-    const parts = str.split(/[-/]/);
-    const d = parts[0].padStart(2, '0');
+    const y = parts[0];
     const m = parts[1].padStart(2, '0');
-    let y = parseInt(parts[2], 10);
-    if (y < 100) y += 2000;
+    const d = parts[2].padStart(2, '0');
     return `${y}-${m}-${d}`;
   }
+
+  // If DD/MM/YYYY or MM/DD/YYYY or D/M/YY
+  if (/^\d{1,2}[-/]\d{1,2}[-/]\d{2,4}$/.test(str)) {
+    const parts = str.split(/[-/]/);
+    const p1 = parseInt(parts[0], 10);
+    const p2 = parseInt(parts[1], 10);
+    let y = parseInt(parts[2], 10);
+    if (y < 100) y += 2000;
+
+    let day = p1;
+    let month = p2;
+
+    if (hintMonth && hintMonth >= 1 && hintMonth <= 12) {
+      if (p1 === hintMonth && p2 !== hintMonth) {
+        month = p1;
+        day = p2;
+      } else if (p2 === hintMonth) {
+        month = p2;
+        day = p1;
+      } else {
+        month = hintMonth;
+        day = p1 <= 31 ? p1 : 1;
+      }
+    } else {
+      if (p1 > 12 && p2 <= 12) {
+        day = p1;
+        month = p2;
+      } else if (p2 > 12 && p1 <= 12) {
+        month = p1;
+        day = p2;
+      } else {
+        // Standard Latin / Ecuador is DD/MM/YYYY
+        day = p1;
+        month = p2;
+      }
+    }
+
+    if (month < 1 || month > 12) month = hintMonth || 9;
+    if (day < 1 || day > 31) day = 1;
+
+    return `${y}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  }
+
+  // If just day number
+  if (/^\d{1,2}$/.test(str)) {
+    const d = parseInt(str, 10);
+    const m = hintMonth || 9;
+    const y = hintYear || 2026;
+    return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  }
+
   return str || '2026-09-01';
 };
 
@@ -526,13 +597,15 @@ export const parseExcelFile = async (
   const activeSheetName = bestSheetName;
   const worksheet = workbook.Sheets[activeSheetName];
 
-  // Recalculate worksheet range to guarantee that Column BH (col 59) and any cells beyond are included if needed
+  // Recalculate worksheet range to guarantee that Column BH (col 59) and Column CB (col 79) and any cells beyond are included if needed
   if (worksheet) {
     let maxR = 0, maxC = 0, minR = 0, minC = 0, hasCells = false;
     let hasBHCell = false;
+    let hasCBCell = false;
     for (const cellKey of Object.keys(worksheet)) {
       if (cellKey.startsWith('!')) continue;
       if (/^BH\d+$/i.test(cellKey)) hasBHCell = true;
+      if (/^CB\d+$/i.test(cellKey)) hasCBCell = true;
       try {
         const decoded = XLSX.utils.decode_cell(cellKey);
         if (!hasCells) {
@@ -554,12 +627,18 @@ export const parseExcelFile = async (
         ? XLSX.utils.decode_range(worksheet['!ref'])
         : { s: { r: 0, c: 0 }, e: { r: 0, c: 0 } };
 
-      const shouldIncludeBH = forcedType === 'firma' || hasBHCell;
-      const effectiveMaxC = shouldIncludeBH ? Math.max(origRange.e.c, maxC, 59) : Math.max(origRange.e.c, maxC);
+      const shouldIncludeBH = forcedType === 'firma' || hasBHCell || maxC >= EXCEL_COL_BH_INDEX;
+      const shouldIncludeCB = forcedType === 'firma' || hasCBCell || maxC >= EXCEL_COL_CB_INDEX;
+      let targetMaxC = Math.max(origRange.e.c, maxC);
+      if (shouldIncludeCB) {
+        targetMaxC = Math.max(targetMaxC, EXCEL_COL_CB_INDEX);
+      } else if (shouldIncludeBH) {
+        targetMaxC = Math.max(targetMaxC, EXCEL_COL_BH_INDEX);
+      }
 
       worksheet['!ref'] = XLSX.utils.encode_range({
         s: { r: Math.min(origRange.s.r, minR), c: Math.min(origRange.s.c, minC) },
-        e: { r: Math.max(origRange.e.r, maxR), c: effectiveMaxC }
+        e: { r: Math.max(origRange.e.r, maxR), c: targetMaxC }
       });
     }
   }
@@ -1072,6 +1151,29 @@ export const parseExcelFile = async (
       }
     }
 
+    // Smart fallback if fechaCol was not matched by header text:
+    if (fechaCol === -1) {
+      let bestDateCol = -1;
+      let maxDateHits = 0;
+      for (let c = 0; c < rawHeaders.length; c++) {
+        if (c === valorCol || c === nombreCol || c === apellidoCol || c === vendedorCol || c === rolCol || c === idCol) continue;
+        let hits = 0;
+        for (let r = 0; r < Math.min(15, dataRows.length); r++) {
+          const cellVal = dataRows[r] && dataRows[r][c];
+          if (cellVal instanceof Date) hits++;
+          else if (typeof cellVal === 'number' && cellVal > 40000 && cellVal < 60000) hits++;
+          else if (typeof cellVal === 'string' && (/^\d{4}[-/]\d{1,2}[-/]\d{1,2}/.test(cellVal.trim()) || /^\d{1,2}[-/]\d{1,2}[-/]\d{2,4}/.test(cellVal.trim()))) hits++;
+        }
+        if (hits > maxDateHits) {
+          maxDateHits = hits;
+          bestDateCol = c;
+        }
+      }
+      if (bestDateCol !== -1 && maxDateHits >= 2) {
+        fechaCol = bestDateCol;
+      }
+    }
+
     // Individual emissions (forcedType 'socios' is already handled by isSocios7ColFormat above)
     const isSummaryTable = false;
 
@@ -1103,34 +1205,84 @@ export const parseExcelFile = async (
         socioName = 'UpConnect Directo';
       }
 
-      // 2. Rol y Canal
+      // 2. Rol y Canal - Prioridad Columna CB (Excel Column 80, 0-indexed 79)
+      // Requerimiento de usuario: "En el reporte 1, en la diapositiva 2 debes calcular 2 cosas Distribuidor Connect y Upconnect, que eso esta en la celda CB del excel que se carga, cambia los nombres y actuliaza los valores, y la cantidad"
+      const excelRowNum = headerRowIndex + 2 + idx;
+      let rawValCB: any = undefined;
+      if (row && row.length > EXCEL_COL_CB_INDEX && row[EXCEL_COL_CB_INDEX] !== undefined && row[EXCEL_COL_CB_INDEX] !== null && String(row[EXCEL_COL_CB_INDEX]).trim() !== '') {
+        rawValCB = row[EXCEL_COL_CB_INDEX];
+      }
+      if ((rawValCB === undefined || rawValCB === null || String(rawValCB).trim() === '') && worksheet) {
+        const wsCell = worksheet[`CB${excelRowNum}`];
+        if (wsCell !== undefined && wsCell !== null) {
+          rawValCB = wsCell.v !== undefined && wsCell.v !== null ? wsCell.v : wsCell.w;
+        }
+      }
+
       const role = rolCol !== -1 && row[rolCol] ? String(row[rolCol]).trim() : '';
       const canalVal = canalCol !== -1 && row[canalCol] ? String(row[canalCol]).trim() : '';
       const combinedInfo = `${canalVal} ${role} ${socioName}`.toLowerCase();
 
-      // Resolver canal con máxima precisión: UpConnect vs Connectors
+      // Resolver canal con máxima precisión: Distribuidor Connect vs Upconnect
       let transactionChannel: 'UpConnect' | 'Connectors' = 'UpConnect';
-      if (
-        combinedInfo.includes('upconnect') ||
-        combinedInfo.includes('up connect') ||
-        combinedInfo.includes('directo') ||
-        combinedInfo.includes('propio')
-      ) {
-        transactionChannel = 'UpConnect';
-      } else if (
-        combinedInfo.includes('connectors') ||
-        combinedInfo.includes('connector') ||
-        combinedInfo.includes('distribuidor') ||
-        combinedInfo.includes('aliado') ||
-        combinedInfo.includes('franquicia') ||
-        (combinedInfo.includes('connect') && !combinedInfo.includes('up'))
-      ) {
-        transactionChannel = 'Connectors';
+      let effectiveRole = role;
+
+      if (rawValCB !== undefined && rawValCB !== null && String(rawValCB).trim() !== '') {
+        const cbStr = String(rawValCB).trim();
+        const cbLower = cbStr.toLowerCase();
+
+        // Identificación por celda CB
+        if (
+          cbLower.includes('upconnect') ||
+          cbLower.includes('up connect') ||
+          cbLower.startsWith('up') ||
+          (cbLower.includes('direct') && !cbLower.includes('distribuidor'))
+        ) {
+          transactionChannel = 'UpConnect';
+          effectiveRole = role || 'Distribuidor Upconnect';
+        } else if (
+          cbLower.includes('distribuidor') ||
+          cbLower.includes('distrib') ||
+          cbLower.includes('connectors') ||
+          cbLower.includes('connector') ||
+          (cbLower.includes('connect') && !cbLower.includes('up'))
+        ) {
+          transactionChannel = 'Connectors';
+          effectiveRole = role || 'Distribuidor Connect';
+        } else {
+          if (cbLower.includes('up')) {
+            transactionChannel = 'UpConnect';
+            effectiveRole = role || cbStr;
+          } else {
+            transactionChannel = 'Connectors';
+            effectiveRole = role || cbStr;
+          }
+        }
       } else {
-        transactionChannel = 'UpConnect';
+        if (
+          combinedInfo.includes('upconnect') ||
+          combinedInfo.includes('up connect') ||
+          combinedInfo.includes('directo') ||
+          combinedInfo.includes('propio')
+        ) {
+          transactionChannel = 'UpConnect';
+        } else if (
+          combinedInfo.includes('connectors') ||
+          combinedInfo.includes('connector') ||
+          combinedInfo.includes('distribuidor') ||
+          combinedInfo.includes('aliado') ||
+          combinedInfo.includes('franquicia') ||
+          (combinedInfo.includes('connect') && !combinedInfo.includes('up'))
+        ) {
+          transactionChannel = 'Connectors';
+        } else {
+          transactionChannel = 'UpConnect';
+        }
+        if (!effectiveRole) {
+          effectiveRole = transactionChannel === 'Connectors' ? 'Distribuidor Connect' : 'Distribuidor Upconnect';
+        }
       }
       const isConnector = transactionChannel === 'Connectors';
-      const effectiveRole = role || (isConnector ? 'Distribuidor Connect' : 'Ventas Directas');
 
       if (isSummaryTable) {
         // SUMMARY ROW: each row is already one socio with total sales and count
@@ -1176,12 +1328,64 @@ export const parseExcelFile = async (
         });
       } else {
         // DETAILED TRANSACTION ROW: 1 row = 1 emission
-        const tipo = tipoCol !== -1 && row[tipoCol] ? String(row[tipoCol]).trim() : 'Firma Electrónica';
-        const duracion = duracionCol !== -1 && row[duracionCol] ? String(row[duracionCol]).trim() : 'Un año';
+        const excelRowNum = headerRowIndex + 2 + idx;
+
+        // EXTRACCIÓN DE TIPO (COLUMNA AI, índice 34) Y VIGENCIA (COLUMNA AK, índice 36)
+        // User specification: "toma como referencia la columna ai que es tipo y la ak que es la vigencia del archivo que se carga"
+        let rawTipoAI: any = undefined;
+        if (row && row.length > EXCEL_COL_AI_INDEX && row[EXCEL_COL_AI_INDEX] !== undefined && row[EXCEL_COL_AI_INDEX] !== null && String(row[EXCEL_COL_AI_INDEX]).trim() !== '') {
+          rawTipoAI = row[EXCEL_COL_AI_INDEX];
+        }
+        if ((rawTipoAI === undefined || rawTipoAI === null || String(rawTipoAI).trim() === '') && worksheet) {
+          const wsCell = worksheet[`AI${excelRowNum}`];
+          if (wsCell !== undefined && wsCell !== null) {
+            rawTipoAI = wsCell.v !== undefined && wsCell.v !== null ? wsCell.v : wsCell.w;
+          }
+        }
+
+        let rawVigenciaAK: any = undefined;
+        if (row && row.length > EXCEL_COL_AK_INDEX && row[EXCEL_COL_AK_INDEX] !== undefined && row[EXCEL_COL_AK_INDEX] !== null && String(row[EXCEL_COL_AK_INDEX]).trim() !== '') {
+          rawVigenciaAK = row[EXCEL_COL_AK_INDEX];
+        }
+        if ((rawVigenciaAK === undefined || rawVigenciaAK === null || String(rawVigenciaAK).trim() === '') && worksheet) {
+          const wsCell = worksheet[`AK${excelRowNum}`];
+          if (wsCell !== undefined && wsCell !== null) {
+            rawVigenciaAK = wsCell.v !== undefined && wsCell.v !== null ? wsCell.v : wsCell.w;
+          }
+        }
+
+        const rawTipo = rawTipoAI !== undefined && rawTipoAI !== null && String(rawTipoAI).trim() !== ''
+          ? String(rawTipoAI).trim()
+          : (tipoCol !== -1 && row[tipoCol] ? String(row[tipoCol]).trim() : 'Firma Electrónica');
+
+        const rawDur = rawVigenciaAK !== undefined && rawVigenciaAK !== null && String(rawVigenciaAK).trim() !== ''
+          ? String(rawVigenciaAK).trim()
+          : (duracionCol !== -1 && row[duracionCol] ? String(row[duracionCol]).trim() : '1 año');
+
+        // Normalizar vigencia a formato estándar: 1 año, 2 años, 3 años, etc.
+        let duracion = '1 año';
+        const durLower = String(rawDur).toLowerCase().trim();
+        if (durLower.includes('15') || durLower.includes('quince') || durLower.includes('dias') || durLower.includes('días')) {
+          duracion = '15 días';
+        } else if (durLower.includes('5') || durLower.includes('cinco')) {
+          duracion = '5 años';
+        } else if (durLower.includes('4') || durLower.includes('cuatro')) {
+          duracion = '4 años';
+        } else if (durLower.includes('3') || durLower.includes('tres')) {
+          duracion = '3 años';
+        } else if (durLower.includes('2') || durLower.includes('dos')) {
+          duracion = '2 años';
+        } else if (durLower.includes('1') || durLower.includes('un')) {
+          duracion = '1 año';
+        } else if (rawDur) {
+          duracion = String(rawDur).trim();
+        }
+
+        const tipo = rawTipo;
+        const productName = `Firma de ${duracion}`;
 
         // EXTRACCIÓN DEL VALOR DE LA COLUMNA BH (DÓLARES ECUATORIANOS)
         // User specification: "el valor tomalo de la columna bh, pero hazlo bien, son valores en dolares ecuatorianos, trae la info que es, hazlo bien"
-        const excelRowNum = headerRowIndex + 2 + idx;
         let rawValBH: any = undefined;
 
         // 1. Prioridad: Columna BH (índice 59) del array de la fila
@@ -1325,6 +1529,51 @@ export const parseExcelFile = async (
     if (ticketCol !== -1) recognizedCols['Ticket Promedio'] = rawHeaders[ticketCol];
     if (planCol !== -1) recognizedCols['Plan Más Vendido'] = rawHeaders[planCol];
 
+    // Detect primary month and cutoff date for exact synchronization
+    const monthCounts: Record<number, number> = {};
+    let minDateStr = '';
+    let maxDateStr = '';
+
+    parsedTransactions.forEach((t) => {
+      if (t.date && /^\d{4}-\d{2}-\d{2}$/.test(t.date)) {
+        const m = parseInt(t.date.split('-')[1], 10);
+        if (m >= 1 && m <= 12) {
+          monthCounts[m] = (monthCounts[m] || 0) + 1;
+        }
+        if (!minDateStr || t.date < minDateStr) minDateStr = t.date;
+        if (!maxDateStr || t.date > maxDateStr) maxDateStr = t.date;
+      }
+    });
+
+    let primaryMonthIndex = 9;
+    let maxMonthHits = -1;
+    for (const [mStr, hits] of Object.entries(monthCounts)) {
+      if (hits > maxMonthHits) {
+        maxMonthHits = hits;
+        primaryMonthIndex = parseInt(mStr, 10);
+      }
+    }
+    const primaryMonthName = MONTH_NAMES_ES[primaryMonthIndex - 1] || 'SEPTIEMBRE';
+    const detectedYear = maxDateStr ? parseInt(maxDateStr.split('-')[0], 10) : 2026;
+
+    let detectedCutoffDate = '';
+    let dateRangeStr = '';
+    if (maxDateStr) {
+      const parts = maxDateStr.split('-');
+      if (parts.length === 3) {
+        const y = parseInt(parts[0], 10);
+        const m = parseInt(parts[1], 10);
+        const d = parseInt(parts[2], 10);
+        const mName = MONTH_NAMES_ES[m - 1]?.toLowerCase() || 'septiembre';
+        detectedCutoffDate = `${d} de ${mName} de ${y}`;
+      }
+    }
+    if (minDateStr && maxDateStr) {
+      const pMin = minDateStr.split('-');
+      const pMax = maxDateStr.split('-');
+      dateRangeStr = `${pMin[2]}/${pMin[1]}/${pMin[0]} al ${pMax[2]}/${pMax[1]}/${pMax[0]}`;
+    }
+
     return {
       sheetNames,
       activeSheet: activeSheetName,
@@ -1335,6 +1584,11 @@ export const parseExcelFile = async (
       unmappedColumns: [],
       recognizedColumns: recognizedCols,
       warnings: [],
+      detectedMonth: primaryMonthName,
+      detectedMonthIndex: primaryMonthIndex,
+      detectedYear,
+      detectedCutoffDate,
+      dateRangeStr,
     };
   }
 
@@ -1583,15 +1837,64 @@ export const parseExcelFile = async (
         }
       }
 
-      // Role & Channel
-      const rawRole = roleCol !== -1 ? String(row[roleCol] || '').trim() : 'Distribuidor Connect';
-      const isConnector = rawRole.toLowerCase().includes('connect') || rawRole.toLowerCase().includes('distribuidor');
-      const channel: 'UpConnect' | 'Connectors' = isConnector ? 'Connectors' : 'UpConnect';
+      // Role & Channel - Prioridad Columna CB (Excel Column 80, 0-indexed 79)
+      // Requerimiento de usuario: "En el reporte 1, en la diapositiva 2 debes calcular 2 cosas Distribuidor Connect y Upconnect, que eso esta en la celda CB del excel que se carga, cambia los nombres y actuliaza los valores, y la cantidad"
+      let rawValCB: any = undefined;
+      if (row && row.length > EXCEL_COL_CB_INDEX && row[EXCEL_COL_CB_INDEX] !== undefined && row[EXCEL_COL_CB_INDEX] !== null && String(row[EXCEL_COL_CB_INDEX]).trim() !== '') {
+        rawValCB = row[EXCEL_COL_CB_INDEX];
+      }
+      if ((rawValCB === undefined || rawValCB === null || String(rawValCB).trim() === '') && worksheet) {
+        const wsCell = worksheet[`CB${excelRowNum}`];
+        if (wsCell !== undefined && wsCell !== null) {
+          rawValCB = wsCell.v !== undefined && wsCell.v !== null ? wsCell.v : wsCell.w;
+        }
+      }
+
+      let channel: 'UpConnect' | 'Connectors' = 'UpConnect';
+      let effectiveRole = roleCol !== -1 ? String(row[roleCol] || '').trim() : '';
+
+      if (rawValCB !== undefined && rawValCB !== null && String(rawValCB).trim() !== '') {
+        const cbStr = String(rawValCB).trim();
+        const cbLower = cbStr.toLowerCase();
+
+        if (
+          cbLower.includes('upconnect') ||
+          cbLower.includes('up connect') ||
+          cbLower.startsWith('up') ||
+          (cbLower.includes('direct') && !cbLower.includes('distribuidor'))
+        ) {
+          channel = 'UpConnect';
+          effectiveRole = effectiveRole || 'Distribuidor Upconnect';
+        } else if (
+          cbLower.includes('distribuidor') ||
+          cbLower.includes('distrib') ||
+          cbLower.includes('connectors') ||
+          cbLower.includes('connector') ||
+          (cbLower.includes('connect') && !cbLower.includes('up'))
+        ) {
+          channel = 'Connectors';
+          effectiveRole = effectiveRole || 'Distribuidor Connect';
+        } else {
+          if (cbLower.includes('up')) {
+            channel = 'UpConnect';
+            effectiveRole = effectiveRole || cbStr;
+          } else {
+            channel = 'Connectors';
+            effectiveRole = effectiveRole || cbStr;
+          }
+        }
+      } else {
+        const rawRole = effectiveRole || 'Distribuidor Connect';
+        const isConnector = rawRole.toLowerCase().includes('connect') || rawRole.toLowerCase().includes('distribuidor');
+        channel = isConnector ? 'Connectors' : 'UpConnect';
+        effectiveRole = rawRole;
+      }
+      const rawRole = effectiveRole;
 
       // Socio
       let socio = socioCol !== -1 ? String(row[socioCol] || '').trim() : '';
       if (!socio) {
-        socio = channel === 'Connectors' ? 'Distribuidor Connect' : 'UpConnect Directo';
+        socio = channel === 'Connectors' ? 'Distribuidor Connect' : 'Distribuidor Upconnect';
       }
 
       // Solution category
@@ -1608,7 +1911,7 @@ export const parseExcelFile = async (
 
       // Aggregate for socios ranking
       if (!socioMap[socio]) {
-        socioMap[socio] = { total: 0, count: 0, role: rawRole || (channel === 'Connectors' ? 'Distribuidor Connect' : 'UpConnect Directo'), plans: {} };
+        socioMap[socio] = { total: 0, count: 0, role: rawRole || (channel === 'Connectors' ? 'Distribuidor Connect' : 'Distribuidor Upconnect'), plans: {} };
       }
       socioMap[socio].total += val;
       socioMap[socio].count += 1;
@@ -1624,7 +1927,7 @@ export const parseExcelFile = async (
         certificateStatus,
         duration,
         value: val,
-        role: rawRole || (channel === 'Connectors' ? 'Distribuidor Connect' : 'UpConnect Directo'),
+        role: rawRole || (channel === 'Connectors' ? 'Distribuidor Connect' : 'Distribuidor Upconnect'),
         channel,
         socio,
         solutionCategory,
@@ -1664,6 +1967,51 @@ export const parseExcelFile = async (
       if (idx === 0) s.note = 'Líder en Ventas';
     });
 
+    // Detect primary month and cutoff date for exact synchronization
+    const monthCounts: Record<number, number> = {};
+    let minDateStr = '';
+    let maxDateStr = '';
+
+    parsedTransactions.forEach((t) => {
+      if (t.date && /^\d{4}-\d{2}-\d{2}$/.test(t.date)) {
+        const m = parseInt(t.date.split('-')[1], 10);
+        if (m >= 1 && m <= 12) {
+          monthCounts[m] = (monthCounts[m] || 0) + 1;
+        }
+        if (!minDateStr || t.date < minDateStr) minDateStr = t.date;
+        if (!maxDateStr || t.date > maxDateStr) maxDateStr = t.date;
+      }
+    });
+
+    let primaryMonthIndex = 9;
+    let maxMonthHits = -1;
+    for (const [mStr, hits] of Object.entries(monthCounts)) {
+      if (hits > maxMonthHits) {
+        maxMonthHits = hits;
+        primaryMonthIndex = parseInt(mStr, 10);
+      }
+    }
+    const primaryMonthName = MONTH_NAMES_ES[primaryMonthIndex - 1] || 'SEPTIEMBRE';
+    const detectedYear = maxDateStr ? parseInt(maxDateStr.split('-')[0], 10) : 2026;
+
+    let detectedCutoffDate = '';
+    let dateRangeStr = '';
+    if (maxDateStr) {
+      const parts = maxDateStr.split('-');
+      if (parts.length === 3) {
+        const y = parseInt(parts[0], 10);
+        const m = parseInt(parts[1], 10);
+        const d = parseInt(parts[2], 10);
+        const mName = MONTH_NAMES_ES[m - 1]?.toLowerCase() || 'septiembre';
+        detectedCutoffDate = `${d} de ${mName} de ${y}`;
+      }
+    }
+    if (minDateStr && maxDateStr) {
+      const pMin = minDateStr.split('-');
+      const pMax = maxDateStr.split('-');
+      dateRangeStr = `${pMin[2]}/${pMin[1]}/${pMin[0]} al ${pMax[2]}/${pMax[1]}/${pMax[0]}`;
+    }
+
     return {
       sheetNames,
       activeSheet: activeSheetName,
@@ -1674,6 +2022,11 @@ export const parseExcelFile = async (
       unmappedColumns,
       recognizedColumns,
       warnings,
+      detectedMonth: primaryMonthName,
+      detectedMonthIndex: primaryMonthIndex,
+      detectedYear,
+      detectedCutoffDate,
+      dateRangeStr,
     };
 };
 
