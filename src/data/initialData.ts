@@ -8,12 +8,18 @@ import { GlobalDataset } from '../types';
  */
 export const initialDataset: GlobalDataset = {
   cutoffDate: 'Sin corte definido',
+  cutoffDateFirma: 'Sin corte definido',
+  cutoffDateSocios: 'Sin corte definido',
   updatedAt: new Date().toISOString(),
   
   // Empty until filled by Excel template upload
   monthlyMetrics: [],
   socios: [],
   transactions: [],
+  firmaTransactions: [],
+  firmaSocios: [],
+  sistemasTransactions: [],
+  sistemasMonthlyMetrics: [],
   
   weeklyBreakdownType1: [],
   weeklyBreakdownType2: [],
@@ -32,6 +38,7 @@ export const initialDataset: GlobalDataset = {
   },
 
   reportFilter: {
-    type: 'all',
+    type: 'month',
+    month: 'OCTUBRE',
   },
 };

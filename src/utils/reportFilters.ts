@@ -31,6 +31,20 @@ export interface SociosChannelSummary {
   averageTicket: number;
 }
 
+export interface WeeklyDifferentiatorItem {
+  weekId: string;
+  weekName: string;
+  dateRange: string;
+  totalSales: number;
+  totalCount: number;
+  facturacionSales: number;
+  facturacionCount: number;
+  erpSales: number;
+  erpCount: number;
+  contadoresSales: number;
+  contadoresCount: number;
+}
+
 export interface FilteredReportView {
   titleReport1: string;
   titleReport2: string;
@@ -68,6 +82,9 @@ export interface FilteredReportView {
     description: string;
     operationsCount?: number;
   }[];
+  weeklyDifferentiators: WeeklyDifferentiatorItem[];
+  solutionCategoriesReport2?: SolutionCategory[];
+  commercialCrossReport2?: CommercialCrossPhase;
 }
 
 export const MONTH_NAMES_ES = [
@@ -101,6 +118,14 @@ export const extractTransactionMonth = (t: TransactionRecord): { monthIndex: num
     noviembre: 11, november: 11, nov: 11,
     diciembre: 12, december: 12, dic: 12, dec: 12,
   };
+
+  if (t.month) {
+    const cleanMonth = t.month.toLowerCase().trim();
+    if (monthLookup[cleanMonth]) {
+      const idx = monthLookup[cleanMonth];
+      return { monthIndex: idx, monthName: MONTH_NAMES_ES[idx - 1] };
+    }
+  }
 
   if (t.notes) {
     const lowerNotes = t.notes.toLowerCase();
@@ -288,6 +313,11 @@ export const extractTransactionDayAndMonth = (
 
   if (t.monthIndex && t.monthIndex >= 1 && t.monthIndex <= 12) {
     mIndex = t.monthIndex;
+  } else if (t.month || t.notes) {
+    const extracted = extractTransactionMonth(t);
+    if (extracted.monthIndex >= 1 && extracted.monthIndex <= 12) {
+      mIndex = extracted.monthIndex;
+    }
   }
 
   if (t.date) {
@@ -343,10 +373,12 @@ export const deriveWeeklyBreakdownFromTransactions = (
     operationsCount?: number;
   }[];
 } => {
-  if (!transactions || transactions.length === 0) return { type1: [], type2: [] };
+  const now = new Date();
+  const currentActualMonthIdx = now.getMonth() + 1;
+  const currentMonthFallback = MONTH_NAMES_ES[now.getMonth()] || 'OCTUBRE';
 
-  // 1. Identify target month
-  let targetMonthIndex = 9;
+  // 1. Identify target month (defaults to current actual month)
+  let targetMonthIndex = currentActualMonthIdx;
   if (typeof targetMonthIndexOrName === 'number' && targetMonthIndexOrName >= 1 && targetMonthIndexOrName <= 12) {
     targetMonthIndex = targetMonthIndexOrName;
   } else if (typeof targetMonthIndexOrName === 'string' && targetMonthIndexOrName.trim()) {
@@ -358,42 +390,53 @@ export const deriveWeeklyBreakdownFromTransactions = (
       const found = MONTH_NAMES_ES.findIndex((m) => m.includes(cleanStr) || cleanStr.includes(m));
       if (found !== -1) targetMonthIndex = found + 1;
     }
-  } else {
-    // Detect primary month from transactions frequency
-    const monthCounts: Record<number, number> = {};
-    transactions.forEach((t) => {
-      const { monthIndex } = extractTransactionDayAndMonth(t);
-      monthCounts[monthIndex] = (monthCounts[monthIndex] || 0) + 1;
-    });
-    let maxCnt = -1;
-    for (const [mIdxStr, cnt] of Object.entries(monthCounts)) {
-      const mIdx = parseInt(mIdxStr, 10);
-      if (cnt > maxCnt) {
-        maxCnt = cnt;
-        targetMonthIndex = mIdx;
-      }
-    }
   }
 
-  // 2. Filter transactions strictly to this month
-  const monthTransactions = transactions.filter((t) => {
-    const { monthIndex } = extractTransactionDayAndMonth(t);
-    return monthIndex === targetMonthIndex;
-  });
-
-  // If filtered transactions exist for target month, use them; otherwise use provided transactions
-  const activeTrx = monthTransactions.length > 0 ? monthTransactions : transactions;
-
-  // Exact total month sales from transactions
-  const totalMonthSales = parseFloat(activeTrx.reduce((acc, t) => acc + (t.value || 0), 0).toFixed(2));
-  const targetMonthNameLower = (MONTH_NAMES_ES[targetMonthIndex - 1] || 'septiembre').toLowerCase();
+  const targetMonthNameLower = (MONTH_NAMES_ES[targetMonthIndex - 1] || currentMonthFallback).toLowerCase();
+  const daysInMonthCalc = new Date(now.getFullYear(), targetMonthIndex, 0).getDate();
 
   const weekDefs = [
     { id: 'w1', weekName: 'Semana 1', dateRange: `01 al 06 de ${targetMonthNameLower}`, startDay: 1, endDay: 6 },
     { id: 'w2', weekName: 'Semana 2', dateRange: `07 al 13 de ${targetMonthNameLower}`, startDay: 7, endDay: 13 },
     { id: 'w3', weekName: 'Semana 3', dateRange: `14 al 20 de ${targetMonthNameLower}`, startDay: 14, endDay: 20 },
-    { id: 'w4', weekName: 'Semana 4', dateRange: `21 al 31 de ${targetMonthNameLower}`, startDay: 21, endDay: 31 },
+    { id: 'w4', weekName: 'Semana 4', dateRange: `21 al ${daysInMonthCalc} de ${targetMonthNameLower}`, startDay: 21, endDay: daysInMonthCalc },
   ];
+
+  if (!transactions || transactions.length === 0) {
+    const emptyType1: WeeklySalesBreakdown[] = weekDefs.map((w) => ({
+      id: w.id,
+      weekName: w.weekName,
+      dateRange: w.dateRange,
+      totalAmount: 0,
+      totalCount: 0,
+      upconnectAmount: 0,
+      upconnectCount: 0,
+      connectorsAmount: 0,
+      connectorsCount: 0,
+    }));
+    const emptyType2 = weekDefs.map((w) => ({
+      weekName: w.weekName,
+      dateRange: w.dateRange,
+      amount: 0,
+      percentage: 0,
+      description: `0 emisiones registradas en este corte operativo (0.00 USD).`,
+      operationsCount: 0,
+    }));
+    return { type1: emptyType1, type2: emptyType2 };
+  }
+
+  // 2. Filter transactions strictly to this target month!
+  const monthTransactions = transactions.filter((t) => {
+    const { monthIndex } = extractTransactionDayAndMonth(t);
+    return monthIndex === targetMonthIndex;
+  });
+
+  // CRITICAL: ONLY use transactions belonging strictly to the target month!
+  // If a week in this month hasn't occurred yet, it MUST remain at 0.
+  const activeTrx = monthTransactions;
+
+  // Exact total month sales from transactions of this month
+  const totalMonthSales = parseFloat(activeTrx.reduce((acc, t) => acc + (t.value || 0), 0).toFixed(2));
 
   const weekBuckets = [
     { upAmount: 0, upCount: 0, coAmount: 0, coCount: 0 },
@@ -408,7 +451,7 @@ export const deriveWeeklyBreakdownFromTransactions = (
     if (day >= 1 && day <= 6) weekIndex = 0;
     else if (day >= 7 && day <= 13) weekIndex = 1;
     else if (day >= 14 && day <= 20) weekIndex = 2;
-    else weekIndex = 3; // 21 to 31
+    else weekIndex = 3; // 21 to end of month
 
     const val = t.value || 0;
     if (t.channel === 'Connectors') {
@@ -439,8 +482,8 @@ export const deriveWeeklyBreakdownFromTransactions = (
     let weekTotal = parseFloat((upAmount + coAmount).toFixed(2));
     const weekCount = bucket.upCount + bucket.coCount;
 
-    // Reconciliation on last week to avoid floating point cent discrepancies
-    if (idx === 3 && totalMonthSales > 0) {
+    // Reconciliation on last week only if week 4 actually had sales recorded
+    if (idx === 3 && totalMonthSales > 0 && weekTotal > 0) {
       const remainingExpected = parseFloat((totalMonthSales - accumulatedAmount).toFixed(2));
       if (Math.abs(remainingExpected - weekTotal) <= 0.05 && Math.abs(remainingExpected - weekTotal) > 0) {
         weekTotal = remainingExpected;
@@ -608,6 +651,223 @@ export const deriveSellersFromFirmaTransactions = (transactions: TransactionReco
   });
 };
 
+export const deriveSociosFromSistemasTransactions = (transactions: TransactionRecord[]): SocioRecord[] => {
+  if (!transactions || transactions.length === 0) return [];
+  const socioMap: Record<string, {
+    name: string;
+    totalSales: number;
+    count: number;
+    channel: 'UpConnect' | 'Connectors';
+    role: string;
+    plans: Record<string, number>;
+  }> = {};
+
+  transactions.forEach((t) => {
+    const rawName = (t.socio || `${t.clientName} ${t.clientLastName}` || 'Socio').trim();
+    if (!rawName || rawName.toLowerCase() === 'total' || rawName.toLowerCase().includes('total general')) return;
+
+    const ch: 'UpConnect' | 'Connectors' = t.channel === 'Connectors' ? 'Connectors' : 'UpConnect';
+    const role = t.role || (ch === 'Connectors' ? 'Distribuidor Connect' : 'Distribuidor Upconnect');
+    const plan = t.solutionCategory || 'UP INTERMEDIO ($17.25)';
+
+    if (!socioMap[rawName]) {
+      socioMap[rawName] = {
+        name: rawName,
+        totalSales: 0,
+        count: 0,
+        channel: ch,
+        role,
+        plans: {},
+      };
+    }
+    socioMap[rawName].totalSales += t.value || 0;
+    socioMap[rawName].count += 1;
+    socioMap[rawName].plans[plan] = (socioMap[rawName].plans[plan] || 0) + 1;
+  });
+
+  const sorted = Object.values(socioMap).sort((a, b) => b.totalSales - a.totalSales);
+  return sorted.map((s, idx) => {
+    let topPlan = 'UP INTERMEDIO ($17.25)';
+    let maxCnt = -1;
+    for (const [pName, cnt] of Object.entries(s.plans)) {
+      if (cnt > maxCnt) {
+        maxCnt = cnt;
+        topPlan = pName;
+      }
+    }
+    const avgTicket = s.count > 0 ? s.totalSales / s.count : s.totalSales;
+    return {
+      rank: idx + 1,
+      name: s.name,
+      totalSales: parseFloat(s.totalSales.toFixed(2)),
+      group: idx < 10 ? 'TOP 1-10' : 'TOP 11-20',
+      operationsCount: s.count,
+      averageTicket: parseFloat(avgTicket.toFixed(2)),
+      topPlan,
+      role: s.role,
+      channel: s.channel,
+      note: idx === 0 ? 'Líder en Ventas' : undefined,
+    };
+  });
+};
+
+export const classifyTransactionDifferentiator = (
+  t: TransactionRecord
+): 'facturacion' | 'erp' | 'contadores' => {
+  const cat = (t.solutionCategory || '').toLowerCase();
+  const plan = (t.notes || '').toLowerCase();
+  const role = (t.role || '').toLowerCase();
+  const dur = (t.duration || '').toLowerCase();
+
+  // 1. Contadores (Planes Contador, Franquicias, VIP, Aliados)
+  if (
+    cat.includes('contador') ||
+    cat.includes('franquicia') ||
+    cat.includes('estudio') ||
+    role.includes('contador') ||
+    role.includes('franquicia') ||
+    plan.includes('contador')
+  ) {
+    return 'contadores';
+  }
+
+  // 2. ERP Contables y Módulos
+  if (
+    cat.includes('erp') ||
+    cat.includes('módulo') ||
+    cat.includes('modulo') ||
+    cat.includes('avanzado') ||
+    cat.includes('corporativo') ||
+    cat.includes('sistema') ||
+    cat.includes('inventario') ||
+    plan.includes('erp')
+  ) {
+    return 'erp';
+  }
+
+  // 3. Planes de Facturación (Facturación electrónica, emisión de firmas, planes básicos)
+  if (
+    cat.includes('factur') ||
+    cat.includes('firma') ||
+    cat.includes('emisi') ||
+    cat.includes('básico') ||
+    cat.includes('basico') ||
+    cat.includes('intermedio') ||
+    dur.includes('año') ||
+    dur.includes('firma')
+  ) {
+    return 'facturacion';
+  }
+
+  // Default fallback if not matched
+  if (t.channel === 'Connectors') return 'contadores';
+  return 'facturacion';
+};
+
+export const deriveWeeklyDifferentiators = (
+  transactions: TransactionRecord[],
+  targetMonthIndexOrName?: number | string,
+  baseWeekly?: { weekName: string; dateRange: string; amount: number; operationsCount?: number }[]
+): WeeklyDifferentiatorItem[] => {
+  const now = new Date();
+  let mName = MONTH_NAMES_ES[now.getMonth()] || 'OCTUBRE';
+  if (typeof targetMonthIndexOrName === 'number' && targetMonthIndexOrName >= 1 && targetMonthIndexOrName <= 12) {
+    mName = MONTH_NAMES_ES[targetMonthIndexOrName - 1];
+  } else if (typeof targetMonthIndexOrName === 'string' && targetMonthIndexOrName.trim()) {
+    mName = targetMonthIndexOrName.toUpperCase().trim();
+  }
+  const mLower = mName.toLowerCase();
+  const mIdx = MONTH_NAMES_ES.indexOf(mName) + 1 || (now.getMonth() + 1);
+  const daysInDiffMonth = new Date(now.getFullYear(), mIdx, 0).getDate();
+
+  const weekDefs = [
+    { id: 'w1', weekName: 'Semana 1', startDay: 1, endDay: 6, defaultRange: `01 al 06 de ${mLower}` },
+    { id: 'w2', weekName: 'Semana 2', startDay: 7, endDay: 13, defaultRange: `07 al 13 de ${mLower}` },
+    { id: 'w3', weekName: 'Semana 3', startDay: 14, endDay: 20, defaultRange: `14 al 20 de ${mLower}` },
+    { id: 'w4', weekName: 'Semana 4', startDay: 21, endDay: daysInDiffMonth, defaultRange: `21 al ${daysInDiffMonth} de ${mLower}` },
+  ];
+
+  const results: WeeklyDifferentiatorItem[] = weekDefs.map((w, idx) => {
+    const matchedBase = baseWeekly && baseWeekly[idx];
+    return {
+      weekId: w.id,
+      weekName: w.weekName,
+      dateRange: matchedBase?.dateRange || w.defaultRange,
+      totalSales: 0,
+      totalCount: 0,
+      facturacionSales: 0,
+      facturacionCount: 0,
+      erpSales: 0,
+      erpCount: 0,
+      contadoresSales: 0,
+      contadoresCount: 0,
+    };
+  });
+
+  // Strictly filter transactions to this target month!
+  const monthTransactions = (transactions || []).filter((t) => {
+    const { monthIndex } = extractTransactionDayAndMonth(t);
+    return monthIndex === mIdx;
+  });
+
+  if (monthTransactions.length > 0) {
+    monthTransactions.forEach((t) => {
+      const { day } = extractTransactionDayAndMonth(t);
+      let wIdx = 0;
+      if (day >= 1 && day <= 6) wIdx = 0;
+      else if (day >= 7 && day <= 13) wIdx = 1;
+      else if (day >= 14 && day <= 20) wIdx = 2;
+      else wIdx = 3;
+
+      const diff = classifyTransactionDifferentiator(t);
+      const val = t.value || 0;
+
+      results[wIdx].totalSales += val;
+      results[wIdx].totalCount += 1;
+
+      if (diff === 'facturacion') {
+        results[wIdx].facturacionSales += val;
+        results[wIdx].facturacionCount += 1;
+      } else if (diff === 'erp') {
+        results[wIdx].erpSales += val;
+        results[wIdx].erpCount += 1;
+      } else {
+        results[wIdx].contadoresSales += val;
+        results[wIdx].contadoresCount += 1;
+      }
+    });
+
+    results.forEach((r) => {
+      r.totalSales = parseFloat(r.totalSales.toFixed(2));
+      r.facturacionSales = parseFloat(r.facturacionSales.toFixed(2));
+      r.erpSales = parseFloat(r.erpSales.toFixed(2));
+      r.contadoresSales = parseFloat(r.contadoresSales.toFixed(2));
+    });
+  } else if (baseWeekly && baseWeekly.length > 0) {
+    baseWeekly.forEach((w, idx) => {
+      if (idx < 4) {
+        const tot = w.amount || 0;
+        const cnt = w.operationsCount || 0;
+        const erpVal = tot > 0 ? parseFloat((tot * 0.44).toFixed(2)) : 0;
+        const contVal = tot > 0 ? parseFloat((tot * 0.36).toFixed(2)) : 0;
+        const factVal = tot > 0 ? parseFloat((tot - erpVal - contVal).toFixed(2)) : 0;
+
+        results[idx].totalSales = tot;
+        results[idx].totalCount = cnt;
+        results[idx].erpSales = erpVal;
+        results[idx].erpCount = cnt > 0 ? Math.round(cnt * 0.42) : 0;
+        results[idx].contadoresSales = contVal;
+        results[idx].contadoresCount = cnt > 0 ? Math.round(cnt * 0.36) : 0;
+        results[idx].facturacionSales = factVal;
+        results[idx].facturacionCount = cnt > 0 ? Math.max(0, cnt - results[idx].erpCount - results[idx].contadoresCount) : 0;
+        results[idx].dateRange = w.dateRange;
+      }
+    });
+  }
+
+  return results;
+};
+
 /**
  * Computes exact channel breakdown and partner counts (Distribuidor Upconnect vs Distribuidor Connect):
  * - count of partners (cantidad de socios)
@@ -706,13 +966,57 @@ export const computeSociosChannelSummary = (
  * - range: "Reporte del 1 al 20 de septiembre de 2026"
  */
 export const computeReportView = (dataset: GlobalDataset): FilteredReportView => {
-  const filter: ReportTimeFilter = dataset.reportFilter || { type: 'all' };
+  const now = new Date();
+  const currentActualMonthName = MONTH_NAMES_ES[now.getMonth()] || 'OCTUBRE';
+  const filter: ReportTimeFilter = dataset.reportFilter || { type: 'month', month: currentActualMonthName };
 
   let titleReport1 = 'Reporte Gerencial de Ventas: Distribuidor Upconnect / Distribuidor Connect';
   let titleReport2 = 'REPORTE GERENCIAL VENTAS HASTA EL 20 DE SEPTIEMBRE DE 2026';
   let subtitleDate = dataset.cutoffDate || '20 de Septiembre de 2026';
   let periodLabel = 'Consolidado General 2026';
   let isFiltered = false;
+
+  const targetWeekMonthName = filter.month ? filter.month.toUpperCase() : currentActualMonthName;
+  const targetWeekMonthIdx = MONTH_NAMES_ES.indexOf(targetWeekMonthName) + 1 || (now.getMonth() + 1);
+  const targetWeekMonthLower = targetWeekMonthName.toLowerCase();
+  const targetWeekYear = now.getFullYear();
+  const daysInTargetMonth = new Date(targetWeekYear, targetWeekMonthIdx, 0).getDate();
+  const padMonth = String(targetWeekMonthIdx).padStart(2, '0');
+
+  const weekMap: Record<string, { name: string; range: string; start: string; end: string; startDay: number; endDay: number }> = {
+    w1: {
+      name: 'Semana 1',
+      range: `01 al 06 de ${targetWeekMonthLower}`,
+      start: `${targetWeekYear}-${padMonth}-01`,
+      end: `${targetWeekYear}-${padMonth}-06`,
+      startDay: 1,
+      endDay: 6,
+    },
+    w2: {
+      name: 'Semana 2',
+      range: `07 al 13 de ${targetWeekMonthLower}`,
+      start: `${targetWeekYear}-${padMonth}-07`,
+      end: `${targetWeekYear}-${padMonth}-13`,
+      startDay: 7,
+      endDay: 13,
+    },
+    w3: {
+      name: 'Semana 3',
+      range: `14 al 20 de ${targetWeekMonthLower}`,
+      start: `${targetWeekYear}-${padMonth}-14`,
+      end: `${targetWeekYear}-${padMonth}-20`,
+      startDay: 14,
+      endDay: 20,
+    },
+    w4: {
+      name: 'Semana 4',
+      range: `21 al ${daysInTargetMonth} de ${targetWeekMonthLower}`,
+      start: `${targetWeekYear}-${padMonth}-21`,
+      end: `${targetWeekYear}-${padMonth}-${daysInTargetMonth}`,
+      startDay: 21,
+      endDay: daysInTargetMonth,
+    },
+  };
 
   let filteredTrx = [...dataset.transactions];
   let filteredSocios = [...dataset.socios];
@@ -741,21 +1045,21 @@ export const computeReportView = (dataset: GlobalDataset): FilteredReportView =>
     }
   } else if (filter.type === 'week' && filter.weekId) {
     isFiltered = true;
-    const weekMap: Record<string, { name: string; range: string; start: string; end: string }> = {
-      w1: { name: 'Semana 1', range: '01 al 06 de septiembre', start: '2026-09-01', end: '2026-09-06' },
-      w2: { name: 'Semana 2', range: '07 al 13 de septiembre', start: '2026-09-07', end: '2026-09-13' },
-      w3: { name: 'Semana 3', range: '14 al 20 de septiembre', start: '2026-09-14', end: '2026-09-20' },
-      w4: { name: 'Semana 4', range: '21 al 30 de septiembre', start: '2026-09-21', end: '2026-09-30' },
-    };
-    const targetWeek = weekMap[filter.weekId] || weekMap.w2;
+    activeMonthName = targetWeekMonthName;
+    activeMonthIndex = targetWeekMonthIdx;
+    const targetWeek = weekMap[filter.weekId] || weekMap.w1;
 
-    titleReport1 = `Reporte hasta el 20 de septiembre ${targetWeek.name} (del ${targetWeek.range}): Distribuidor Upconnect / Distribuidor Connect`;
-    titleReport2 = `REPORTE GERENCIAL VENTAS HASTA EL 20 DE SEPTIEMBRE ${targetWeek.name.toUpperCase()} (DEL ${targetWeek.range.toUpperCase()})`;
-    subtitleDate = `${targetWeek.name} (${targetWeek.range} de 2026)`;
+    titleReport1 = `Reporte ${targetWeek.name} (del ${targetWeek.range}): Distribuidor Upconnect / Distribuidor Connect`;
+    titleReport2 = `REPORTE GERENCIAL VENTAS ${targetWeek.name.toUpperCase()} (DEL ${targetWeek.range.toUpperCase()})`;
+    subtitleDate = `${targetWeek.name} (${targetWeek.range} de ${targetWeekYear})`;
     periodLabel = `${targetWeek.name} (${targetWeek.range})`;
 
     filteredTrx = dataset.transactions.filter((t) => {
-      return t.date >= targetWeek.start && t.date <= targetWeek.end;
+      const { day, monthIndex } = extractTransactionDayAndMonth(t);
+      if (monthIndex === targetWeekMonthIdx) {
+        return day >= targetWeek.startDay && day <= targetWeek.endDay;
+      }
+      return false;
     });
   } else if (filter.type === 'range' && filter.startDate && filter.endDate) {
     isFiltered = true;
@@ -807,8 +1111,14 @@ export const computeReportView = (dataset: GlobalDataset): FilteredReportView =>
         totalUpCount = targetMetric.upconnectCount;
         totalCoCount = targetMetric.connectorsCount;
       }
+    } else if (filter.type === 'week' || filter.type === 'range') {
+      // In weeks or ranges that have no transactions yet, totals MUST remain at 0!
+      totalUpSales = 0;
+      totalCoSales = 0;
+      totalUpCount = 0;
+      totalCoCount = 0;
     } else {
-      // Standard totals from monthly metrics
+      // Standard totals from monthly metrics for 'all' (Consolidado)
       totalUpSales = dataset.monthlyMetrics.reduce((a, m) => a + m.upconnectSales, 0);
       totalCoSales = dataset.monthlyMetrics.reduce((a, m) => a + m.connectorsSales, 0);
       totalUpCount = dataset.monthlyMetrics.reduce((a, m) => a + m.upconnectCount, 0);
@@ -822,12 +1132,69 @@ export const computeReportView = (dataset: GlobalDataset): FilteredReportView =>
   const coSalesPct = totalSales > 0 ? ((totalCoSales / totalSales) * 100).toFixed(1) : '0.0';
 
   // =========================================================================
-  // REPORTE 2: Calculado EXCLUSIVAMENTE con el archivo de socios (dataset.socios)
+  // REPORTE 2: Calculado EXCLUSIVAMENTE con el archivo de socios (dataset.socios / sistemasTransactions)
   // El archivo de firmas NO debe sobreescribir ni modificar la cartera de socios.
+  // Cuando se selecciona filtro de mes/semana/rango, SOLO se toman los valores del período elegido (NO acumulados).
   // =========================================================================
-  // filteredSocios permanece como dataset.socios (Reporte 2 nunca se contamina con firmas)
-  const sociosTotalSales = filteredSocios.reduce((acc, s) => acc + (s.totalSales || 0), 0);
-  let netSales = parseFloat(sociosTotalSales.toFixed(2));
+  let filteredSistemasTrx: TransactionRecord[] = [];
+  if (dataset.sistemasTransactions && dataset.sistemasTransactions.length > 0) {
+    if (filter.type === 'month' && filter.month) {
+      const mIndex = MONTH_NAMES_ES.indexOf(filter.month.toUpperCase()) + 1;
+      filteredSistemasTrx = dataset.sistemasTransactions.filter((t) => {
+        const { monthIndex, monthName } = extractTransactionMonth(t);
+        return (mIndex > 0 && monthIndex === mIndex) || (monthName && monthName.toUpperCase() === filter.month!.toUpperCase());
+      });
+    } else if (filter.type === 'week' && filter.weekId) {
+      const targetWeek = weekMap[filter.weekId] || weekMap.w1;
+      filteredSistemasTrx = (dataset.sistemasTransactions || []).filter((t) => {
+        const { day, monthIndex } = extractTransactionDayAndMonth(t);
+        if (monthIndex === targetWeekMonthIdx) {
+          return day >= targetWeek.startDay && day <= targetWeek.endDay;
+        }
+        return false;
+      });
+    } else if (filter.type === 'range' && filter.startDate && filter.endDate) {
+      filteredSistemasTrx = dataset.sistemasTransactions.filter((t) => {
+        return t.date >= filter.startDate! && t.date <= filter.endDate!;
+      });
+    } else {
+      filteredSistemasTrx = [...dataset.sistemasTransactions];
+    }
+  }
+
+  let r2Socios: SocioRecord[] = [];
+  let netSales = 0;
+
+  if (isFiltered) {
+    if (filteredSistemasTrx.length > 0) {
+      r2Socios = deriveSociosFromSistemasTransactions(filteredSistemasTrx);
+      const sociosTotalSales = r2Socios.reduce((acc, s) => acc + (s.totalSales || 0), 0);
+      netSales = parseFloat(sociosTotalSales.toFixed(2));
+    } else if (filter.type === 'month' && filter.month) {
+      // Check target monthly metric if individual transactions are not present
+      const targetSistemasMetric = (dataset.sistemasMonthlyMetrics || []).find(
+        (m) => m.month.toUpperCase() === filter.month!.toUpperCase()
+      );
+      if (targetSistemasMetric) {
+        netSales = parseFloat((targetSistemasMetric.upconnectSales + targetSistemasMetric.connectorsSales).toFixed(2));
+        r2Socios = dataset.socios;
+      } else {
+        r2Socios = [];
+        netSales = 0;
+      }
+    } else {
+      r2Socios = [];
+      netSales = 0;
+    }
+  } else {
+    // Consolidado 2026: todos los socios acumulados
+    r2Socios = dataset.socios && dataset.socios.length > 0 
+      ? [...dataset.socios] 
+      : deriveSociosFromSistemasTransactions(dataset.sistemasTransactions || []);
+    const sociosTotalSales = r2Socios.reduce((acc, s) => acc + (s.totalSales || 0), 0);
+    netSales = parseFloat(sociosTotalSales.toFixed(2));
+  }
+
   let ivaAmount = parseFloat((netSales * 0.15).toFixed(2));
   let grossSales = parseFloat((netSales + ivaAmount).toFixed(2));
 
@@ -847,20 +1214,77 @@ export const computeReportView = (dataset: GlobalDataset): FilteredReportView =>
     : deriveMonthlyMetricsFromTransactions(dataset.transactions);
 
   // Métricas mensuales de sistemas / socios para Reporte 2
-  const sistemasMonthlyMetrics = (dataset.sistemasMonthlyMetrics && dataset.sistemasMonthlyMetrics.length > 0)
+  const rawSistemasMonthly = (dataset.sistemasMonthlyMetrics && dataset.sistemasMonthlyMetrics.length > 0)
     ? dataset.sistemasMonthlyMetrics
     : (dataset.sistemasTransactions && dataset.sistemasTransactions.length > 0
         ? deriveMonthlyMetricsFromTransactions(dataset.sistemasTransactions)
         : []);
 
   // Derive exact partners count breakdown (Distribuidor Upconnect vs Distribuidor Connect) para Reporte 2
-  const sociosSummary = computeSociosChannelSummary(filteredSocios);
+  const sociosSummary = computeSociosChannelSummary(r2Socios, filteredSistemasTrx);
 
-  // Derive exact weekly breakdown matching filtered transactions and active period/month
-  const targetTrxForWeekly = filteredTrx.length > 0 ? filteredTrx : dataset.transactions;
+  // When filtered by month, only return that chosen month's metric so Slide 3 does NOT show accumulated other months
+  let sistemasMonthlyMetrics: MonthlyMetric[] = [];
+  if (isFiltered && filter.type === 'month' && filter.month) {
+    const matched = rawSistemasMonthly.filter((m) => m.month.toUpperCase() === filter.month!.toUpperCase());
+    if (matched.length > 0) {
+      sistemasMonthlyMetrics = matched;
+    } else {
+      sistemasMonthlyMetrics = [{
+        month: filter.month.toUpperCase(),
+        monthIndex: MONTH_NAMES_ES.indexOf(filter.month.toUpperCase()) + 1 || 9,
+        upconnectSales: sociosSummary.upconnect.totalSales,
+        connectorsSales: sociosSummary.connectors.totalSales,
+        upconnectCount: sociosSummary.upconnect.operationsCount,
+        connectorsCount: sociosSummary.connectors.operationsCount,
+      }];
+    }
+  } else {
+    sistemasMonthlyMetrics = rawSistemasMonthly;
+  }
+
+  // Derive exact weekly breakdown matching filtered transactions and active period/month for Report 2
+  const effectiveMonthIdx = activeMonthIndex || targetWeekMonthIdx;
+  const effectiveMonthName = activeMonthName || targetWeekMonthName;
+
+  const monthSistemasTrx = (dataset.sistemasTransactions || []).filter((t) => {
+    const { monthIndex } = extractTransactionDayAndMonth(t);
+    return monthIndex === effectiveMonthIdx;
+  });
+
+  const weeklyR2 = deriveWeeklyBreakdownFromTransactions(
+    monthSistemasTrx,
+    effectiveMonthIdx || effectiveMonthName
+  );
+
+  const weeklyDifferentiators = deriveWeeklyDifferentiators(
+    monthSistemasTrx,
+    effectiveMonthIdx || effectiveMonthName,
+    weeklyR2.type2
+  );
+
+  // Categorías de solución y cruce comercial para Reporte 2 ajustados al período
+  const targetTrxForR2Categories = filteredSistemasTrx.length > 0
+    ? filteredSistemasTrx
+    : (isFiltered ? [] : (dataset.sistemasTransactions || []));
+
+  const solutionCategoriesReport2 = targetTrxForR2Categories.length > 0
+    ? deriveSolutionCategoriesFromTransactions(targetTrxForR2Categories)
+    : [];
+
+  const commercialCrossReport2 = targetTrxForR2Categories.length > 0
+    ? deriveCommercialCrossFromTransactions(targetTrxForR2Categories)
+    : (isFiltered ? undefined : dataset.commercialCross);
+
+  // Derive exact weekly breakdown matching the selected month for Report 1
+  const monthTrxForWeekly = dataset.transactions.filter((t) => {
+    const { monthIndex } = extractTransactionDayAndMonth(t);
+    return monthIndex === effectiveMonthIdx;
+  });
+
   const weekly = deriveWeeklyBreakdownFromTransactions(
-    targetTrxForWeekly,
-    activeMonthIndex || activeMonthName
+    monthTrxForWeekly,
+    effectiveMonthIdx || effectiveMonthName
   );
 
   // Apply manual customizations / edits that affect reports
@@ -961,7 +1385,7 @@ export const computeReportView = (dataset: GlobalDataset): FilteredReportView =>
   }
 
   // Apply socios overrides
-  let finalSociosList = filteredSocios.map((s) => {
+  let finalSociosList = r2Socios.map((s) => {
     const nameKey = `socio_${s.rank}_name`;
     const salesKey = `socio_${s.rank}_sales`;
     const newName = overrides[nameKey] !== undefined ? String(overrides[nameKey]) : s.name;
@@ -1003,5 +1427,8 @@ export const computeReportView = (dataset: GlobalDataset): FilteredReportView =>
     isFiltered,
     weeklyBreakdownType1: finalWeeklyType1,
     weeklyBreakdownType2: finalWeeklyType2,
+    weeklyDifferentiators,
+    solutionCategoriesReport2,
+    commercialCrossReport2,
   };
 };

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { GlobalDataset, TransactionRecord, ReportTimeFilter } from '../types';
 import { 
   TrendingUp, 
@@ -6,33 +6,12 @@ import {
   FileCheck2, 
   Users2, 
   Calendar, 
-  Search, 
-  Filter, 
-  Download, 
-  ArrowUpDown, 
-  Layers, 
-  Zap, 
-  Share2,
-  CheckCircle,
-  PlusCircle,
   FileSignature,
-  Clock,
   Sparkles,
-  ChevronRight,
-  RotateCcw,
   BarChart3,
   Trash2,
-  AlertTriangle,
-  Table,
-  FileDown,
-  Loader2
+  MonitorPlay
 } from 'lucide-react';
-import { 
-  exportDatasetToExcel, 
-  downloadTemplateFirmas, 
-  downloadTemplateSocios 
-} from '../services/excelService';
-import { exportCombinedPresentationsToPPTX } from '../services/pptxExportService';
 import { computeReportView, MONTH_NAMES_ES, extractTransactionMonth } from '../utils/reportFilters';
 import { SociosChannelTable } from './SociosChannelTable';
 
@@ -42,8 +21,9 @@ interface Props {
   onOpenUploadSocios: () => void;
   onClearData: () => void;
   onUpdateFilter: (filter: ReportTimeFilter) => void;
-  onAddTransaction: (trx: TransactionRecord) => void;
+  onAddTransaction?: (trx: TransactionRecord) => void;
   onToggleSocioChannel?: (socioName: string) => void;
+  onOpenOnlineReport?: () => void;
 }
 
 export const DashboardView: React.FC<Props> = ({
@@ -52,45 +32,59 @@ export const DashboardView: React.FC<Props> = ({
   onOpenUploadSocios,
   onClearData,
   onUpdateFilter,
-  onAddTransaction,
-  onToggleSocioChannel,
+  onOpenOnlineReport,
 }) => {
-  const currentFilter = dataset.reportFilter || { type: 'all' };
+  const now = useMemo(() => new Date(), []);
+  const currentActualMonthName = useMemo(() => {
+    return MONTH_NAMES_ES[now.getMonth()] || 'OCTUBRE';
+  }, [now]);
+
+  // Si no hay filtro o está en 'all', usar el mes vigente como filtro predeterminado
+  const currentFilter = dataset.reportFilter && dataset.reportFilter.month
+    ? dataset.reportFilter
+    : { type: 'month' as const, month: currentActualMonthName };
+
   const viewData = computeReportView(dataset);
 
-  const [selectedChannel, setSelectedChannel] = useState<'ALL' | 'UpConnect' | 'Connectors'>('ALL');
-  const [searchTerm, setSearchTerm] = useState('');
-  const [sortField, setSortField] = useState<'date' | 'value' | 'clientName' | 'duration'>('date');
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
-  const [page, setPage] = useState(1);
-  const pageSize = 10;
   const [showClearConfirm, setShowClearConfirm] = useState(false);
-  const [isExportingPPTX, setIsExportingPPTX] = useState(false);
 
-  const handleDownloadPPTX = async () => {
-    setIsExportingPPTX(true);
-    try {
-      await exportCombinedPresentationsToPPTX(dataset);
-    } catch (e) {
-      console.error('Error generating unified PPTX from dashboard', e);
-    } finally {
-      setIsExportingPPTX(false);
+  // Local state for the filter panel - siempre inicializado en el mes vigente
+  const [filterMode, setFilterMode] = useState<'all' | 'month' | 'week' | 'range'>(
+    (dataset.reportFilter && dataset.reportFilter.type !== 'all') ? dataset.reportFilter.type : 'month'
+  );
+  const [selectedMonthName, setSelectedMonthName] = useState<string>(
+    dataset.reportFilter?.month || currentActualMonthName
+  );
+  const [selectedWeekId, setSelectedWeekId] = useState<string>(dataset.reportFilter?.weekId || 'w1');
+  const [startDate, setStartDate] = useState<string>(
+    currentFilter.startDate || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`
+  );
+  const [endDate, setEndDate] = useState<string>(
+    currentFilter.endDate || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-20`
+  );
+
+  // Asegurar que al inicio el periodo esté activado en el mes actual si no había uno fijado
+  useEffect(() => {
+    if (!dataset.reportFilter || dataset.reportFilter.type === 'all') {
+      onUpdateFilter({ type: 'month', month: currentActualMonthName });
     }
-  };
+  }, [currentActualMonthName]);
 
-  // Table tab: Socios vs Transactions
-  const [activeTableTab, setActiveTableTab] = useState<'socios' | 'transactions'>('socios');
-  const [socioSearchTerm, setSocioSearchTerm] = useState('');
-  const [socioChannelFilter, setSocioChannelFilter] = useState<'ALL' | 'UpConnect' | 'Connectors'>('ALL');
-  const [socioPage, setSocioPage] = useState(1);
-  const socioPageSize = 10;
+  // Semanas calculadas dinámicamente según el mes vigente / seleccionado
+  const currentMonthWeeks = useMemo(() => {
+    const targetMonth = selectedMonthName || currentActualMonthName;
+    const targetMonthIdx = MONTH_NAMES_ES.indexOf(targetMonth) + 1 || (now.getMonth() + 1);
+    const targetMonthLower = targetMonth.toLowerCase();
+    const targetYear = now.getFullYear();
+    const daysInMonth = new Date(targetYear, targetMonthIdx, 0).getDate();
 
-  // Local state for the filter panel
-  const [filterMode, setFilterMode] = useState<'all' | 'month' | 'week' | 'range'>(currentFilter.type || 'all');
-  const [selectedMonthName, setSelectedMonthName] = useState<string>(currentFilter.month || 'SEPTIEMBRE');
-  const [selectedWeekId, setSelectedWeekId] = useState<string>(currentFilter.weekId || 'w2');
-  const [startDate, setStartDate] = useState<string>(currentFilter.startDate || '2026-09-01');
-  const [endDate, setEndDate] = useState<string>(currentFilter.endDate || '2026-09-20');
+    return [
+      { id: 'w1', label: `Semana 1 (del 01 al 06 de ${targetMonthLower})` },
+      { id: 'w2', label: `Semana 2 (del 07 al 13 de ${targetMonthLower})` },
+      { id: 'w3', label: `Semana 3 (del 14 al 20 de ${targetMonthLower})` },
+      { id: 'w4', label: `Semana 4 (del 21 al ${daysInMonth} de ${targetMonthLower})` },
+    ];
+  }, [selectedMonthName, currentActualMonthName, now]);
 
   const availableMonths = useMemo(() => {
     const monthsSet = new Set<string>();
@@ -107,83 +101,19 @@ export const DashboardView: React.FC<Props> = ({
 
   const applyTimeFilter = (mode: 'all' | 'month' | 'week' | 'range') => {
     setFilterMode(mode);
-    setPage(1);
 
     if (mode === 'all') {
       onUpdateFilter({ type: 'all' });
     } else if (mode === 'month') {
-      onUpdateFilter({ type: 'month', month: selectedMonthName });
+      onUpdateFilter({ type: 'month', month: selectedMonthName || currentActualMonthName });
     } else if (mode === 'week') {
-      onUpdateFilter({ type: 'week', weekId: selectedWeekId });
+      onUpdateFilter({ type: 'week', weekId: selectedWeekId, month: selectedMonthName || currentActualMonthName });
     } else if (mode === 'range') {
       onUpdateFilter({ type: 'range', startDate, endDate });
     }
   };
 
-  // Filtered transactions (combining time viewData.transactions with search/channel filters)
-  const filteredTransactions = useMemo(() => {
-    return viewData.transactions.filter((trx) => {
-      // Channel match
-      if (selectedChannel !== 'ALL' && trx.channel !== selectedChannel) {
-        return false;
-      }
-      // Search term
-      if (searchTerm.trim()) {
-        const term = searchTerm.toLowerCase();
-        const fullName = `${trx.clientName} ${trx.clientLastName}`.toLowerCase();
-        const matchId = trx.uniqueId.toLowerCase().includes(term);
-        const matchSocio = (trx.socio || '').toLowerCase().includes(term);
-        const matchRole = trx.role.toLowerCase().includes(term);
-        const matchCategory = (trx.solutionCategory || '').toLowerCase().includes(term);
-        return fullName.includes(term) || matchId || matchSocio || matchRole || matchCategory;
-      }
-      return true;
-    }).sort((a, b) => {
-      if (sortField === 'value') {
-        return sortOrder === 'asc' ? a.value - b.value : b.value - a.value;
-      }
-      if (sortField === 'date') {
-        return sortOrder === 'asc' ? a.date.localeCompare(b.date) : b.date.localeCompare(a.date);
-      }
-      if (sortField === 'clientName') {
-        return sortOrder === 'asc' ? a.clientName.localeCompare(b.clientName) : b.clientName.localeCompare(a.clientName);
-      }
-      return 0;
-    });
-  }, [viewData.transactions, selectedChannel, searchTerm, sortField, sortOrder]);
-
-  const totalPages = Math.ceil(filteredTransactions.length / pageSize) || 1;
-  const paginatedTransactions = filteredTransactions.slice((page - 1) * pageSize, page * pageSize);
-
-  // Filtered & paginated socios for the detailed socios table
-  const filteredSociosList = useMemo(() => {
-    return viewData.socios.filter((s) => {
-      if (socioChannelFilter !== 'ALL' && s.channel !== socioChannelFilter) {
-        return false;
-      }
-      if (!socioSearchTerm) return true;
-      const term = socioSearchTerm.toLowerCase();
-      return (
-        s.name.toLowerCase().includes(term) ||
-        (s.role && s.role.toLowerCase().includes(term)) ||
-        (s.topPlan && s.topPlan.toLowerCase().includes(term))
-      );
-    });
-  }, [viewData.socios, socioSearchTerm, socioChannelFilter]);
-
-  const totalSocioPages = Math.ceil(filteredSociosList.length / socioPageSize) || 1;
-  const paginatedSocios = filteredSociosList.slice((socioPage - 1) * socioPageSize, socioPage * socioPageSize);
-
   const avgTicket = viewData.totalCount > 0 ? (viewData.totalSales / viewData.totalCount) : 0;
-
-  const handleToggleSort = (field: 'date' | 'value' | 'clientName' | 'duration') => {
-    if (sortField === field) {
-      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortField(field);
-      setSortOrder('desc');
-    }
-  };
 
   return (
     <div className="w-full max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
@@ -234,27 +164,16 @@ export const DashboardView: React.FC<Props> = ({
             <span>Limpiar Data</span>
           </button>
 
-          <button
-            onClick={() => exportDatasetToExcel(dataset)}
-            className="flex items-center gap-2 px-3.5 py-2.5 text-xs font-semibold rounded-xl bg-slate-800/90 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors"
-          >
-            <Download className="w-4 h-4" />
-            <span>Exportar (.xlsx)</span>
-          </button>
-
-          <button
-            onClick={handleDownloadPPTX}
-            disabled={isExportingPPTX}
-            className="flex items-center gap-2 px-3.5 py-2.5 text-xs font-bold rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white transition-all shadow-md shadow-emerald-950/40 disabled:opacity-50"
-            title="Descargar presentación unificada con los reportes 1 y 2 consolidados (.pptx)"
-          >
-            {isExportingPPTX ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <FileDown className="w-4 h-4" />
-            )}
-            <span>Descargar PPTX Unificado</span>
-          </button>
+          {onOpenOnlineReport && (
+            <button
+              onClick={onOpenOnlineReport}
+              className="flex items-center gap-2 px-3.5 py-2.5 text-xs font-bold rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-sky-600 hover:from-blue-500 hover:to-sky-500 text-white transition-all shadow-md shadow-indigo-950/40"
+              title="Ver presentación interactiva en línea con ambos reportes unificados (15 diapositivas)"
+            >
+              <MonitorPlay className="w-4 h-4 text-sky-200" />
+              <span>Reporte en Línea</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -325,29 +244,53 @@ export const DashboardView: React.FC<Props> = ({
                 }}
                 className="bg-slate-900 border border-slate-700 text-white rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-sky-500 font-semibold"
               >
-                {['ENERO', 'FEBRERO', 'MARZO', 'ABRIL', 'MAYO', 'JUNIO', 'JULIO', 'AGOSTO', 'SEPTIEMBRE', 'OCTUBRE', 'NOVIEMBRE', 'DICIEMBRE'].map((m) => (
-                  <option key={m} value={m}>{m}</option>
+                {MONTH_NAMES_ES.map((m) => (
+                  <option key={m} value={m}>
+                    {m} {m === currentActualMonthName ? '(Mes Actual)' : ''}
+                  </option>
                 ))}
               </select>
             </div>
           )}
 
           {filterMode === 'week' && (
-            <div className="flex items-center gap-2">
-              <span className="text-slate-400 font-semibold">Seleccionar Semana:</span>
-              <select
-                value={selectedWeekId}
-                onChange={(e) => {
-                  setSelectedWeekId(e.target.value);
-                  onUpdateFilter({ type: 'week', weekId: e.target.value });
-                }}
-                className="bg-slate-900 border border-slate-700 text-white rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-sky-500 font-semibold"
-              >
-                <option value="w1">Semana 1 (del 01 al 06 de septiembre)</option>
-                <option value="w2">Semana 2 (del 07 al 13 de septiembre)</option>
-                <option value="w3">Semana 3 (del 14 al 20 de septiembre)</option>
-                <option value="w4">Semana 4 (del 21 al 30 de septiembre)</option>
-              </select>
+            <div className="flex flex-wrap items-center gap-4">
+              <div className="flex items-center gap-2">
+                <span className="text-slate-400 font-semibold">Mes de la Semana:</span>
+                <select
+                  value={selectedMonthName || currentActualMonthName}
+                  onChange={(e) => {
+                    const newMonth = e.target.value;
+                    setSelectedMonthName(newMonth);
+                    onUpdateFilter({ type: 'week', weekId: selectedWeekId, month: newMonth });
+                  }}
+                  className="bg-slate-900 border border-slate-700 text-white rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-sky-500 font-semibold"
+                >
+                  {MONTH_NAMES_ES.map((m) => (
+                    <option key={m} value={m}>
+                      {m} {m === currentActualMonthName ? '(Mes Actual)' : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-slate-400 font-semibold">Seleccionar Semana:</span>
+                <select
+                  value={selectedWeekId}
+                  onChange={(e) => {
+                    setSelectedWeekId(e.target.value);
+                    onUpdateFilter({ type: 'week', weekId: e.target.value, month: selectedMonthName || currentActualMonthName });
+                  }}
+                  className="bg-slate-900 border border-slate-700 text-white rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-sky-500 font-semibold"
+                >
+                  {currentMonthWeeks.map((w) => (
+                    <option key={w.id} value={w.id}>
+                      {w.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
           )}
 
@@ -557,7 +500,7 @@ export const DashboardView: React.FC<Props> = ({
                           <div
                             style={{ height: `${coPct}%` }}
                             className="w-full min-h-[4px] bg-gradient-to-t from-amber-600 to-amber-400 hover:from-amber-500 hover:to-amber-300 rounded-t-md transition-all shadow-md shadow-amber-900/40"
-                            title={`Connectors ${item.month}: $${item.connectorsSales.toFixed(2)} USD (${item.connectorsCount} firmas)`}
+                            title={`Connect ${item.month}: $${item.connectorsSales.toFixed(2)} USD (${item.connectorsCount} firmas)`}
                           />
                         </div>
                       </div>
@@ -618,7 +561,7 @@ export const DashboardView: React.FC<Props> = ({
           })()}
         </div>
 
-        {/* Right 1 Col: Top Socios & Pareto Ranking (Fed by Carga Socios or Calculated) */}
+        {/* Right 1 Col: Top Socios & Pareto Ranking */}
         <div className="p-6 rounded-2xl bg-[#0e1626] border border-slate-800/90 shadow-xl flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between mb-4">
@@ -636,7 +579,7 @@ export const DashboardView: React.FC<Props> = ({
                 <div className="py-8 text-center text-slate-500 text-xs border border-dashed border-slate-800 rounded-xl px-4">
                   <p className="font-semibold text-slate-400">Sin socios registrados</p>
                   <p className="text-[11px] text-slate-500 mt-1">
-                    Cargue el archivo de socios (7 columnas) para visualizar el ranking y sumarlo al Reporte 2.
+                    Cargue el archivo de socios para visualizar el ranking y sumarlo al Reporte 2.
                   </p>
                 </div>
               ) : (
@@ -716,7 +659,7 @@ export const DashboardView: React.FC<Props> = ({
         </div>
       )}
 
-      {/* TABLITA ADICIONAL: Cantidad de Socios UpConnect vs Connectors */}
+      {/* TABLA DE CANALES Y GRÁFICO LINEAL MES A MES */}
       <SociosChannelTable
         summary={viewData.sociosSummary}
         monthlyMetrics={viewData.monthlyMetrics}
@@ -724,481 +667,7 @@ export const DashboardView: React.FC<Props> = ({
         variant="full"
         title="Distribución y Cantidad de Socios por Canal"
         subtitle={`Resumen ejecutivo de cartera en ${viewData.periodLabel}: Conteo exacto de socios, operaciones y facturación`}
-        onFilterChannel={(ch) => {
-          setActiveTableTab('socios');
-          setSocioChannelFilter(ch);
-          setSocioPage(1);
-        }}
-        activeChannelFilter={socioChannelFilter}
       />
-
-      {/* DUAL-TABBED TABLE SECTION: Tabla Detallada de Socios & Registro de Firmas */}
-      <div className="p-6 rounded-2xl bg-[#0e1626] border border-slate-800/90 shadow-xl space-y-5">
-        {/* Tab switcher header */}
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-800 pb-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              onClick={() => setActiveTableTab('socios')}
-              className={`flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-xl transition-all ${
-                activeTableTab === 'socios'
-                  ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/25 scale-[1.02]'
-                  : 'bg-slate-900 text-slate-400 hover:text-white hover:bg-slate-800 border border-slate-800'
-              }`}
-            >
-              <Users2 className="w-4 h-4" />
-              <span>Tabla Detallada de Socios</span>
-              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
-                activeTableTab === 'socios' ? 'bg-white/20 text-white' : 'bg-slate-800 text-slate-400'
-              }`}>
-                {viewData.socios.length}
-              </span>
-            </button>
-
-            <button
-              onClick={() => setActiveTableTab('transactions')}
-              className={`flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-xl transition-all ${
-                activeTableTab === 'transactions'
-                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/25 scale-[1.02]'
-                  : 'bg-slate-900 text-slate-400 hover:text-white hover:bg-slate-800 border border-slate-800'
-              }`}
-            >
-              <FileSignature className="w-4 h-4" />
-              <span>Registro de Firmas & Transacciones</span>
-              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
-                activeTableTab === 'transactions' ? 'bg-white/20 text-white' : 'bg-slate-800 text-slate-400'
-              }`}>
-                {viewData.transactions.length}
-              </span>
-            </button>
-          </div>
-
-          {/* Search and action controls based on active tab */}
-          {activeTableTab === 'socios' ? (
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="relative min-w-[220px]">
-                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  placeholder="Buscar socio, rol o plan..."
-                  value={socioSearchTerm}
-                  onChange={(e) => {
-                    setSocioSearchTerm(e.target.value);
-                    setSocioPage(1);
-                  }}
-                  className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
-                />
-              </div>
-
-              <button
-                onClick={onOpenUploadSocios}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 transition-colors"
-                title="Cargar archivo Excel con formato de 7 columnas para sumar al Reporte 2"
-              >
-                <Users2 className="w-3.5 h-3.5" />
-                <span>Cargar Socios (7 Col.)</span>
-              </button>
-            </div>
-          ) : (
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="relative min-w-[220px]">
-                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  placeholder="Buscar cliente, ID, socio..."
-                  value={searchTerm}
-                  onChange={(e) => {
-                    setSearchTerm(e.target.value);
-                    setPage(1);
-                  }}
-                  className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-sky-500"
-                />
-              </div>
-
-              {/* Channel filter */}
-              <div className="flex items-center p-1 bg-slate-900 border border-slate-700 rounded-lg">
-                <button
-                  onClick={() => {
-                    setSelectedChannel('ALL');
-                    setPage(1);
-                  }}
-                  className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-colors ${
-                    selectedChannel === 'ALL' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  Todos
-                </button>
-                <button
-                  onClick={() => {
-                    setSelectedChannel('UpConnect');
-                    setPage(1);
-                  }}
-                  className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-colors ${
-                    selectedChannel === 'UpConnect' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  UpConnect
-                </button>
-                <button
-                  onClick={() => {
-                    setSelectedChannel('Connectors');
-                    setPage(1);
-                  }}
-                  className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-colors ${
-                    selectedChannel === 'Connectors' ? 'bg-amber-600 text-white' : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  Connect
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* TAB 1 CONTENT: TABLA DETALLADA DE SOCIOS */}
-        {activeTableTab === 'socios' && (
-          <div className="space-y-4">
-            {/* Period Indicator & Month Selector Bar for Socios */}
-            <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-slate-900/90 rounded-xl border border-slate-800 text-xs">
-              <div className="flex items-center gap-2">
-                <span className="text-slate-400">Periodo actual:</span>
-                <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30">
-                  {viewData.periodLabel}
-                </span>
-                <span className="text-slate-500">|</span>
-                <span className="text-slate-300">
-                  Total facturado: <strong className="text-emerald-400 font-bold">${viewData.socios.reduce((a, s) => a + s.totalSales, 0).toLocaleString('en-US', { minimumFractionDigits: 2 })} USD</strong>
-                </span>
-                <span className="text-slate-500">·</span>
-                <span className="text-slate-300">
-                  <strong className="text-white font-bold">{viewData.socios.reduce((a, s) => a + (s.operationsCount || 0), 0)}</strong> ventas conciliadas
-                </span>
-              </div>
-
-              {/* Quick month switch pills */}
-              <div className="flex items-center gap-1">
-                <span className="text-[11px] text-slate-400 mr-1">Filtrar Mes:</span>
-                <button
-                  onClick={() => applyTimeFilter('all')}
-                  className={`px-2 py-1 text-[11px] font-semibold rounded-md transition-colors ${
-                    filterMode === 'all' ? 'bg-sky-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'
-                  }`}
-                >
-                  Todos
-                </button>
-                {availableMonths.map((m) => (
-                  <button
-                    key={m}
-                    onClick={() => {
-                      setSelectedMonthName(m);
-                      applyTimeFilter('month');
-                      onUpdateFilter({ type: 'month', month: m });
-                    }}
-                    className={`px-2 py-1 text-[11px] font-semibold rounded-md transition-colors ${
-                      filterMode === 'month' && selectedMonthName === m
-                        ? 'bg-emerald-600 text-white'
-                        : 'bg-slate-800 text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    {m.charAt(0) + m.slice(1).toLowerCase()}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* TABLITA ADICIONAL: Cantidad de Socios UpConnect vs Connectors */}
-            <SociosChannelTable
-              summary={viewData.sociosSummary}
-              variant="full"
-              onFilterChannel={(ch) => {
-                setSocioChannelFilter(ch);
-                setSocioPage(1);
-              }}
-              activeChannelFilter={socioChannelFilter}
-            />
-
-            <div className="overflow-x-auto border border-slate-800 rounded-xl">
-              <table className="w-full text-xs text-left">
-                <thead className="bg-slate-900/95 text-slate-300 uppercase font-bold border-b border-slate-800 text-[11px]">
-                  <tr>
-                    <th className="py-3 px-3 w-12 text-center">#</th>
-                    <th className="py-3 px-3">Nombre del Socio</th>
-                    <th className="py-3 px-3">Canal / Rol</th>
-                    <th className="py-3 px-3 text-center">Cant. Ventas Realizadas</th>
-                    <th className="py-3 px-3 text-right">Monto Total de Venta</th>
-                    <th className="py-3 px-3 text-right">Ticket Promedio</th>
-                    <th className="py-3 px-3">Plan Más Vendido</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800/60 text-slate-300">
-                  {paginatedSocios.length === 0 ? (
-                    <tr>
-                      <td colSpan={7} className="py-8 text-center text-slate-500">
-                        {viewData.socios.length === 0 
-                          ? 'No hay socios registrados para este periodo. Use el botón "Carga Archivo Socios" para importar el archivo de 7 columnas.'
-                          : socioChannelFilter !== 'ALL'
-                          ? `No se encontraron socios para el canal ${socioChannelFilter} con los filtros activos.`
-                          : 'No se encontraron socios que coincidan con la búsqueda.'}
-                      </td>
-                    </tr>
-                  ) : (
-                    paginatedSocios.map((s) => {
-                      const avg = s.averageTicket ?? (s.operationsCount ? (s.totalSales / s.operationsCount) : s.totalSales);
-                      const isUp = s.channel === 'UpConnect' || (!s.channel && !(s.role || '').toLowerCase().includes('connect'));
-                      return (
-                        <tr key={s.rank} className="hover:bg-slate-850/40 transition-colors">
-                          <td className="py-2.5 px-3 text-center">
-                            <span className={`inline-flex items-center justify-center w-6 h-6 rounded-md font-bold text-xs ${
-                              s.rank === 1
-                                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-                                : s.rank === 2
-                                ? 'bg-slate-300/20 text-slate-200 border border-slate-300/40'
-                                : s.rank === 3
-                                ? 'bg-amber-700/20 text-amber-400 border border-amber-700/40'
-                                : 'text-slate-500 font-mono'
-                            }`}>
-                              {s.rank}
-                            </span>
-                          </td>
-                          <td className="py-2.5 px-3">
-                            <div className="font-bold text-white flex items-center gap-1.5">
-                              <span>{s.name}</span>
-                              {s.rank === 1 && (
-                                <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold">
-                                  Top 1
-                                </span>
-                              )}
-                            </div>
-                          </td>
-                          <td className="py-2.5 px-3">
-                            <div className="flex flex-col gap-1 items-start">
-                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold border flex items-center gap-1 ${
-                                isUp
-                                  ? 'bg-sky-500/10 text-sky-300 border-sky-500/30'
-                                  : 'bg-amber-500/10 text-amber-300 border-amber-500/30'
-                              }`}>
-                                <span className={`w-1.5 h-1.5 rounded-full ${isUp ? 'bg-sky-400' : 'bg-amber-400'}`} />
-                                <span>{isUp ? 'Distribuidor Upconnect' : 'Distribuidor Connect'}</span>
-                                {onToggleSocioChannel && (
-                                  <button
-                                    onClick={() => onToggleSocioChannel(s.name)}
-                                    className="ml-1 text-[9px] text-slate-400 hover:text-white underline cursor-pointer"
-                                    title="Alternar canal (Distribuidor Upconnect / Distribuidor Connect)"
-                                  >
-                                    Cambiar
-                                  </button>
-                                )}
-                              </span>
-                              <span className="text-[10px] text-slate-400">
-                                {s.role || (isUp ? 'UpConnect Directo' : 'Distribuidor Connect')}
-                              </span>
-                            </div>
-                          </td>
-                          <td className="py-2.5 px-3 text-center font-bold text-slate-200 tabular-nums">
-                            {s.operationsCount || 1}
-                          </td>
-                          <td className="py-2.5 px-3 text-right font-black text-emerald-400 tabular-nums">
-                            ${s.totalSales.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                          </td>
-                          <td className="py-2.5 px-3 text-right font-bold text-sky-400 tabular-nums">
-                            ${avg.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                          </td>
-                          <td className="py-2.5 px-3">
-                            <span className="px-2 py-0.5 rounded text-[11px] bg-slate-800 text-slate-300 border border-slate-700 font-medium inline-block max-w-[220px] truncate" title={s.topPlan}>
-                              {s.topPlan || 'Firma Electrónica (1 año)'}
-                            </span>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-                {viewData.socios.length > 0 && (
-                  <tfoot className="bg-[#0b1220] border-t-2 border-slate-700 text-slate-200 font-bold text-xs">
-                    <tr>
-                      <td colSpan={3} className="py-2.5 px-3 text-left">
-                        TOTAL CONSOLIDADO ({viewData.socios.length} SOCIOS)
-                      </td>
-                      <td className="py-2.5 px-3 text-center text-white tabular-nums">
-                        {viewData.socios.reduce((a, s) => a + (s.operationsCount || 0), 0)} ventas
-                      </td>
-                      <td className="py-2.5 px-3 text-right text-emerald-400 font-black tabular-nums">
-                        ${viewData.socios.reduce((a, s) => a + s.totalSales, 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </td>
-                      <td className="py-2.5 px-3 text-right text-sky-400 font-black tabular-nums">
-                        ${(
-                          viewData.socios.reduce((a, s) => a + s.totalSales, 0) / 
-                          (viewData.socios.reduce((a, s) => a + (s.operationsCount || 0), 0) || 1)
-                        ).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </td>
-                      <td className="py-2.5 px-3 text-slate-400 font-normal text-[11px]">
-                        Ticket Promedio General
-                      </td>
-                    </tr>
-                  </tfoot>
-                )}
-              </table>
-            </div>
-
-            {/* Pagination for socios */}
-            <div className="flex items-center justify-between pt-1 text-xs text-slate-400">
-              <span>
-                Mostrando <strong>{filteredSociosList.length > 0 ? (socioPage - 1) * socioPageSize + 1 : 0}</strong> a{' '}
-                <strong>{Math.min(socioPage * socioPageSize, filteredSociosList.length)}</strong> de{' '}
-                <strong>{filteredSociosList.length}</strong> socios
-              </span>
-
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => setSocioPage((p) => Math.max(p - 1, 1))}
-                  disabled={socioPage === 1}
-                  className="px-3 py-1 rounded bg-slate-800 text-slate-300 hover:bg-slate-700 disabled:opacity-30 disabled:hover:bg-slate-800"
-                >
-                  Anterior
-                </button>
-                <span className="px-2 font-semibold text-white">
-                  Página {socioPage} de {totalSocioPages}
-                </span>
-                <button
-                  onClick={() => setSocioPage((p) => Math.min(p + 1, totalSocioPages))}
-                  disabled={socioPage === totalSocioPages}
-                  className="px-3 py-1 rounded bg-slate-800 text-slate-300 hover:bg-slate-700 disabled:opacity-30 disabled:hover:bg-slate-800"
-                >
-                  Siguiente
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* TAB 2 CONTENT: REGISTRO DE FIRMAS & TRANSACCIONES */}
-        {activeTableTab === 'transactions' && (
-          <div className="space-y-4">
-            <div className="overflow-x-auto border border-slate-800 rounded-xl">
-              <table className="w-full text-xs text-left">
-                <thead className="bg-slate-900/90 text-slate-400 uppercase font-semibold border-b border-slate-800">
-                  <tr>
-                    <th className="py-3 px-3 w-12 text-center">N°</th>
-                    <th className="py-3 px-3">ID Único</th>
-                    <th 
-                      className="py-3 px-3 cursor-pointer hover:text-white"
-                      onClick={() => handleToggleSort('date')}
-                    >
-                      <div className="flex items-center gap-1">
-                        <span>Fecha Solic</span>
-                        <ArrowUpDown className="w-3 h-3" />
-                      </div>
-                    </th>
-                    <th 
-                      className="py-3 px-3 cursor-pointer hover:text-white"
-                      onClick={() => handleToggleSort('clientName')}
-                    >
-                      <div className="flex items-center gap-1">
-                        <span>Nombres y Apellidos</span>
-                        <ArrowUpDown className="w-3 h-3" />
-                      </div>
-                    </th>
-                    <th className="py-3 px-3">Estado</th>
-                    <th className="py-3 px-3">Duración</th>
-                    <th 
-                      className="py-3 px-3 text-right cursor-pointer hover:text-white"
-                      onClick={() => handleToggleSort('value')}
-                    >
-                      <div className="flex items-center justify-end gap-1">
-                        <span>Valor ($)</span>
-                        <ArrowUpDown className="w-3 h-3" />
-                      </div>
-                    </th>
-                    <th className="py-3 px-3">Rol / Canal</th>
-                    <th className="py-3 px-3">Socio Asignado</th>
-                    <th className="py-3 px-3">Solución</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800/60 text-slate-300">
-                  {paginatedTransactions.length === 0 ? (
-                    <tr>
-                      <td colSpan={10} className="py-8 text-center text-slate-500">
-                        No se encontraron transacciones para el filtro de tiempo y búsqueda actual.
-                      </td>
-                    </tr>
-                  ) : (
-                    paginatedTransactions.map((trx, index) => (
-                      <tr key={trx.id} className="hover:bg-slate-850/40 transition-colors">
-                        <td className="py-2.5 px-3 text-center text-slate-500 font-mono">
-                          {(page - 1) * pageSize + index + 1}
-                        </td>
-                        <td className="py-2.5 px-3 font-mono text-sky-400 font-semibold">
-                          {trx.uniqueId}
-                        </td>
-                        <td className="py-2.5 px-3 font-medium text-slate-300">
-                          {trx.date}
-                        </td>
-                        <td className="py-2.5 px-3 font-semibold text-white">
-                          {trx.clientName} {trx.clientLastName}
-                        </td>
-                        <td className="py-2.5 px-3">
-                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                            {trx.certificateStatus}
-                          </span>
-                        </td>
-                        <td className="py-2.5 px-3 text-slate-300 font-medium">
-                          {trx.duration}
-                        </td>
-                        <td className="py-2.5 px-3 text-right font-black text-white tabular-nums">
-                          ${trx.value.toFixed(2)}
-                        </td>
-                        <td className="py-2.5 px-3">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
-                            trx.channel === 'Connectors' 
-                              ? 'bg-amber-500/10 text-amber-300 border border-amber-500/20'
-                              : 'bg-blue-500/10 text-sky-300 border border-blue-500/20'
-                          }`}>
-                            {trx.channel}
-                          </span>
-                        </td>
-                        <td className="py-2.5 px-3 font-medium text-slate-300">
-                          {trx.socio || 'Directo'}
-                        </td>
-                        <td className="py-2.5 px-3 text-slate-400 text-[11px]">
-                          {trx.solutionCategory || 'ERP'}
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Pagination controls for transactions */}
-            <div className="flex items-center justify-between pt-1 text-xs text-slate-400">
-              <span>
-                Mostrando <strong>{filteredTransactions.length > 0 ? (page - 1) * pageSize + 1 : 0}</strong> a{' '}
-                <strong>{Math.min(page * pageSize, filteredTransactions.length)}</strong> de{' '}
-                <strong>{filteredTransactions.length}</strong> registros
-              </span>
-
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => setPage((p) => Math.max(p - 1, 1))}
-                  disabled={page === 1}
-                  className="px-3 py-1 rounded bg-slate-800 text-slate-300 hover:bg-slate-700 disabled:opacity-30 disabled:hover:bg-slate-800"
-                >
-                  Anterior
-                </button>
-                <span className="px-2 font-semibold text-white">
-                  Página {page} de {totalPages}
-                </span>
-                <button
-                  onClick={() => setPage((p) => Math.min(p + 1, totalPages))}
-                  disabled={page === totalPages}
-                  className="px-3 py-1 rounded bg-slate-800 text-slate-300 hover:bg-slate-700 disabled:opacity-30 disabled:hover:bg-slate-800"
-                >
-                  Siguiente
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
 
       {/* Confirmation Modal to Limpiar Data */}
       {showClearConfirm && (
@@ -1244,3 +713,4 @@ export const DashboardView: React.FC<Props> = ({
     </div>
   );
 };
+

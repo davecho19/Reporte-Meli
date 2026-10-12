@@ -344,36 +344,42 @@ export const SlideEditorModal: React.FC<Props> = ({
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div>
-                      <label className="block text-slate-300 font-semibold mb-1">UpConta Socios (%)</label>
+                      <label className="block text-slate-300 font-semibold mb-1">UpConta Socios (Cantidad)</label>
                       <input
                         type="number"
-                        step="any"
-                        value={Number(getValue('upcontaSocios', 52))}
-                        onChange={(e) => onChangeValue('upcontaSocios', parseFloat(e.target.value) || 0)}
+                        min="0"
+                        step="1"
+                        value={Number(getValue('upcontaSocios', 118))}
+                        onChange={(e) => onChangeValue('upcontaSocios', parseInt(e.target.value, 10) || 0)}
                         className="w-full bg-slate-950 border border-slate-700 rounded px-2.5 py-1.5 text-sky-400 font-bold text-xs"
                       />
                     </div>
                     <div>
-                      <label className="block text-slate-300 font-semibold mb-1">Franquicia VIP (%)</label>
+                      <label className="block text-slate-300 font-semibold mb-1">Cantidad de Franquiciados VIP</label>
                       <input
                         type="number"
-                        step="any"
-                        value={Number(getValue('franquiciaVIP', 31))}
-                        onChange={(e) => onChangeValue('franquiciaVIP', parseFloat(e.target.value) || 0)}
+                        min="0"
+                        step="1"
+                        value={Number(getValue('franquiciaVIP', 129))}
+                        onChange={(e) => onChangeValue('franquiciaVIP', parseInt(e.target.value, 10) || 0)}
                         className="w-full bg-slate-950 border border-slate-700 rounded px-2.5 py-1.5 text-amber-400 font-bold text-xs"
                       />
                     </div>
                     <div>
-                      <label className="block text-slate-300 font-semibold mb-1">Formación Comercial (%)</label>
+                      <label className="block text-slate-300 font-semibold mb-1">Formación Comercial (Miembros)</label>
                       <input
                         type="number"
-                        step="any"
-                        value={Number(getValue('formacionComercial', 17))}
-                        onChange={(e) => onChangeValue('formacionComercial', parseFloat(e.target.value) || 0)}
+                        min="0"
+                        step="1"
+                        value={Number(getValue('formacionComercial', 51))}
+                        onChange={(e) => onChangeValue('formacionComercial', parseInt(e.target.value, 10) || 0)}
                         className="w-full bg-slate-950 border border-slate-700 rounded px-2.5 py-1.5 text-emerald-400 font-bold text-xs"
                       />
                     </div>
                   </div>
+                  <p className="text-[11px] text-slate-400 mt-2">
+                    * Al modificar la cantidad de franquiciados, se actualiza inmediatamente la tabla que le sigue de distribución y cantidad de socios por canal.
+                  </p>
                 </div>
               )}
 

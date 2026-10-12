@@ -630,8 +630,6 @@ export const SociosChannelTable: React.FC<SociosChannelTableProps> = ({
 
             const gridLevels = [0, 0.33, 0.66, 1];
 
-            const activeItem = hoveredIndex !== null ? chartData[hoveredIndex] : chartData[chartData.length - 1];
-
             return (
               <div className="space-y-3">
                 <div className="relative rounded-xl bg-slate-950/70 border border-slate-800 p-2 overflow-hidden">
@@ -830,81 +828,6 @@ export const SociosChannelTable: React.FC<SociosChannelTableProps> = ({
                     })}
                   </svg>
                 </div>
-
-                {/* Month-over-Month Comparative Pills below chart */}
-                {activeItem && (
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
-                    {/* UpConnect MoM Card */}
-                    <div className="p-3 rounded-xl bg-slate-900/80 border border-sky-500/30 flex items-center justify-between">
-                      <div>
-                        <div className="text-[10px] uppercase font-bold text-sky-400">
-                          UpConnect · {activeItem.month}
-                        </div>
-                        <div className="text-base font-extrabold text-white tabular-nums mt-0.5">
-                          {isSocios
-                            ? `${activeItem.upCount} socios / firmas`
-                            : `$${activeItem.upSales.toLocaleString('en-US', { minimumFractionDigits: 2 })} USD`}
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold inline-flex items-center ${
-                          (isSocios ? activeItem.upGrowthCount : activeItem.upGrowthSales) >= 0
-                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                            : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
-                        }`}>
-                          {(isSocios ? activeItem.upGrowthCount : activeItem.upGrowthSales) >= 0 ? '+' : ''}
-                          {(isSocios ? activeItem.upGrowthCount : activeItem.upGrowthSales).toFixed(1)}% MoM
-                        </span>
-                        <div className="text-[10px] text-slate-500 mt-0.5">vs mes anterior</div>
-                      </div>
-                    </div>
-
-                    {/* Connectors MoM Card */}
-                    <div className="p-3 rounded-xl bg-slate-900/80 border border-amber-500/30 flex items-center justify-between">
-                      <div>
-                        <div className="text-[10px] uppercase font-bold text-amber-400">
-                          Distribuidor Connect · {activeItem.month}
-                        </div>
-                        <div className="text-base font-extrabold text-white tabular-nums mt-0.5">
-                          {isSocios
-                            ? `${activeItem.coCount} socios / firmas`
-                            : `$${activeItem.coSales.toLocaleString('en-US', { minimumFractionDigits: 2 })} USD`}
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold inline-flex items-center ${
-                          (isSocios ? activeItem.coGrowthCount : activeItem.coGrowthSales) >= 0
-                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                            : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
-                        }`}>
-                          {(isSocios ? activeItem.coGrowthCount : activeItem.coGrowthSales) >= 0 ? '+' : ''}
-                          {(isSocios ? activeItem.coGrowthCount : activeItem.coGrowthSales).toFixed(1)}% MoM
-                        </span>
-                        <div className="text-[10px] text-slate-500 mt-0.5">vs mes anterior</div>
-                      </div>
-                    </div>
-
-                    {/* Consolidated MoM Card */}
-                    <div className="p-3 rounded-xl bg-slate-900/80 border border-emerald-500/30 flex items-center justify-between">
-                      <div>
-                        <div className="text-[10px] uppercase font-bold text-emerald-400">
-                          Total General · {activeItem.month}
-                        </div>
-                        <div className="text-base font-extrabold text-emerald-400 tabular-nums mt-0.5">
-                          {isSocios
-                            ? `${activeItem.totalCount} operaciones`
-                            : `$${activeItem.totalSales.toLocaleString('en-US', { minimumFractionDigits: 2 })} USD`}
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-[11px] font-bold text-white tabular-nums">
-                          {activeItem.totalSales > 0 ? ((activeItem.upSales / activeItem.totalSales) * 100).toFixed(0) : '0'}% Up / {activeItem.totalSales > 0 ? ((activeItem.coSales / activeItem.totalSales) * 100).toFixed(0) : '0'}% Co
-                        </div>
-                        <div className="text-[10px] text-slate-400 mt-0.5">Mix de canal</div>
-                      </div>
-                    </div>
-                  </div>
-                )}
               </div>
             );
           })()

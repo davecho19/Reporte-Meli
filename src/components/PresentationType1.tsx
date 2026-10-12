@@ -30,13 +30,15 @@ import {
   Check,
   X,
   Package,
-  Sparkles
+  Sparkles,
+  MonitorPlay
 } from 'lucide-react';
 
 interface Props {
   dataset: GlobalDataset;
   onBackToDashboard?: () => void;
   onUpdateDataset?: (updated: Partial<GlobalDataset>) => void;
+  onOpenOnlineReport?: () => void;
 }
 
 interface TopProductItem {
@@ -48,7 +50,7 @@ interface TopProductItem {
   label?: string;
 }
 
-export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard, onUpdateDataset }) => {
+export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard, onUpdateDataset, onOpenOnlineReport }) => {
   const [currentSlide, setCurrentSlide] = useState<number>(1);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [sociosViewMode, setSociosViewMode] = useState<'table' | 'ranking' | 'channels'>('table');
@@ -79,7 +81,7 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard,
   };
 
   const viewData = computeReportView(dataset);
-  const activeSocios = viewData.socios;
+  const activeSocios = viewData.firmaSocios;
 
   // Dynamic filter check: When filter is 'all' (Consolidado), hide weekly evolution slide!
   const filterType = dataset.reportFilter?.type || 'all';
@@ -159,37 +161,92 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard,
     setIsFullscreen(!isFullscreen);
   };
 
-  // Communities: Auto calculation based on registered socios & manual customization
-  const autoUpSocios = viewData.sociosSummary.upconnect.count;
-  const autoCoSocios = viewData.sociosSummary.connectors.count;
+  // Communities: Auto calculation based on registered socios in Firma file & manual customization
+  const autoUpSocios = viewData.firmaSociosSummary.upconnect.count || (viewData.transactions.length > 0 ? viewData.transactions.filter(t => t.channel === 'UpConnect').length : 118);
+  const autoCoSocios = viewData.firmaSociosSummary.connectors.count || (viewData.transactions.length > 0 ? viewData.transactions.filter(t => t.channel === 'Connectors').length : 129);
   const autoFormacion = Math.max(1, Math.round((autoUpSocios + autoCoSocios) * 0.25)) || 51;
 
   const [customCommunities, setCustomCommunities] = useState<{
     upcontaSocios?: number;
     franquiciaVIP?: number;
     formacionComercial?: number;
-  }>({});
+  }>(() => {
+    const ov = dataset.customOverrides || {};
+    return {
+      upcontaSocios: ov['upcontaSocios'] !== undefined ? Number(ov['upcontaSocios']) : undefined,
+      franquiciaVIP: ov['franquiciaVIP'] !== undefined ? Number(ov['franquiciaVIP']) : undefined,
+      formacionComercial: ov['formacionComercial'] !== undefined ? Number(ov['formacionComercial']) : undefined,
+    };
+  });
+
+  useEffect(() => {
+    const ov = dataset.customOverrides || {};
+    if (ov['upcontaSocios'] !== undefined || ov['franquiciaVIP'] !== undefined || ov['formacionComercial'] !== undefined) {
+      setCustomCommunities((prev) => ({
+        ...prev,
+        upcontaSocios: ov['upcontaSocios'] !== undefined ? Number(ov['upcontaSocios']) : prev.upcontaSocios,
+        franquiciaVIP: ov['franquiciaVIP'] !== undefined ? Number(ov['franquiciaVIP']) : prev.franquiciaVIP,
+        formacionComercial: ov['formacionComercial'] !== undefined ? Number(ov['formacionComercial']) : prev.formacionComercial,
+      }));
+    }
+  }, [dataset.customOverrides]);
+
   const [isEditingCommunities, setIsEditingCommunities] = useState<boolean>(false);
   const [tempUpconta, setTempUpconta] = useState<number>(0);
   const [tempFranquicia, setTempFranquicia] = useState<number>(0);
   const [tempFormacion, setTempFormacion] = useState<number>(0);
 
-  const upcontaMembers = customCommunities.upcontaSocios ?? (autoUpSocios > 0 ? autoUpSocios : (dataset.transactions.length > 0 ? 0 : 118));
-  const franquiciaMembers = customCommunities.franquiciaVIP ?? (autoCoSocios > 0 ? autoCoSocios : (dataset.transactions.length > 0 ? 0 : 129));
-  const formacionMembers = customCommunities.formacionComercial ?? (autoCoSocios > 0 ? autoFormacion : (dataset.transactions.length > 0 ? 0 : 51));
+  const upcontaMembers = editValues['upcontaSocios'] !== undefined
+    ? Number(editValues['upcontaSocios'])
+    : (customCommunities.upcontaSocios ?? (autoUpSocios > 0 ? autoUpSocios : (dataset.transactions.length > 0 ? 0 : 118)));
+
+  const franquiciaMembers = editValues['franquiciaVIP'] !== undefined
+    ? Number(editValues['franquiciaVIP'])
+    : (customCommunities.franquiciaVIP ?? (autoCoSocios > 0 ? autoCoSocios : (dataset.transactions.length > 0 ? 0 : 129)));
+
+  const formacionMembers = editValues['formacionComercial'] !== undefined
+    ? Number(editValues['formacionComercial'])
+    : (customCommunities.formacionComercial ?? (autoCoSocios > 0 ? autoFormacion : (dataset.transactions.length > 0 ? 0 : 51)));
+
   const isManuallyModified =
     customCommunities.upcontaSocios !== undefined ||
     customCommunities.franquiciaVIP !== undefined ||
-    customCommunities.formacionComercial !== undefined;
+    customCommunities.formacionComercial !== undefined ||
+    editValues['upcontaSocios'] !== undefined ||
+    editValues['franquiciaVIP'] !== undefined ||
+    editValues['formacionComercial'] !== undefined;
 
-  const handleExportPPTX = async () => {
-    try {
-      setIsExportingPPTX(true);
-      await exportPresentationType1ToPPTX(dataset, customCommunities);
-    } catch (e) {
-      console.error('Error generating PowerPoint file', e);
-    } finally {
-      setIsExportingPPTX(false);
+  const handleSaveCommunitiesModal = (up: number, vip: number, form: number) => {
+    const updated = {
+      upcontaSocios: up,
+      franquiciaVIP: vip,
+      formacionComercial: form,
+    };
+    setCustomCommunities(updated);
+    setEditValues((prev) => ({
+      ...prev,
+      ...updated,
+    }));
+    if (onUpdateDataset) {
+      onUpdateDataset({
+        customOverrides: {
+          ...(dataset.customOverrides || {}),
+          ...updated,
+        },
+      });
+    }
+    setIsEditingCommunities(false);
+  };
+
+  const handleResetCommunities = () => {
+    setCustomCommunities({});
+    const newOverrides = { ...(dataset.customOverrides || {}) };
+    delete newOverrides.upcontaSocios;
+    delete newOverrides.franquiciaVIP;
+    delete newOverrides.formacionComercial;
+    setEditValues(newOverrides);
+    if (onUpdateDataset) {
+      onUpdateDataset({ customOverrides: newOverrides });
     }
   };
 
@@ -202,6 +259,69 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard,
   const totalUpCount = viewData.totalUpCount;
   const totalCoCount = viewData.totalCoCount;
   const totalCount = viewData.totalCount;
+
+  // Dynamic Communities Channel Table Summary directly reflecting upcontaMembers and franquiciaMembers
+  const communitiesTableSummary = React.useMemo(() => {
+    const upCount = upcontaMembers;
+    const coCount = franquiciaMembers;
+    const totalMembers = upCount + coCount;
+    const upPct = totalMembers > 0 ? parseFloat(((upCount / totalMembers) * 100).toFixed(1)) : 0;
+    const coPct = totalMembers > 0 ? parseFloat(((coCount / totalMembers) * 100).toFixed(1)) : 0;
+
+    const upOps = totalUpCount;
+    const coOps = totalCoCount;
+    const totalOps = totalCount;
+
+    const upNetSales = totalUpSales;
+    const coNetSales = totalCoSales;
+    const allSales = totalSales;
+
+    const upAvgTicket = upOps > 0 ? parseFloat((upNetSales / upOps).toFixed(2)) : (upCount > 0 ? parseFloat((upNetSales / upCount).toFixed(2)) : 0);
+    const coAvgTicket = coOps > 0 ? parseFloat((coNetSales / coOps).toFixed(2)) : (coCount > 0 ? parseFloat((coNetSales / coCount).toFixed(2)) : 0);
+    const avgTicket = totalOps > 0 ? parseFloat((allSales / totalOps).toFixed(2)) : 0;
+
+    return {
+      upconnect: {
+        channel: 'UpConnect' as const,
+        channelLabel: 'Distribuidor Upconnect',
+        count: upCount,
+        percentage: upPct,
+        operationsCount: upOps,
+        totalSales: upNetSales,
+        averageTicket: upAvgTicket,
+        socios: viewData.firmaSocios.filter((s) => s.channel === 'UpConnect'),
+      },
+      connectors: {
+        channel: 'Connectors' as const,
+        channelLabel: 'Distribuidor Connect',
+        count: coCount,
+        percentage: coPct,
+        operationsCount: coOps,
+        totalSales: coNetSales,
+        averageTicket: coAvgTicket,
+        socios: viewData.firmaSocios.filter((s) => s.channel === 'Connectors'),
+      },
+      totalSociosCount: totalMembers,
+      totalOperationsCount: totalOps,
+      totalSales: allSales,
+      averageTicket: avgTicket,
+    };
+  }, [upcontaMembers, franquiciaMembers, totalUpCount, totalCoCount, totalCount, totalUpSales, totalCoSales, totalSales, viewData.firmaSocios]);
+
+  const handleExportPPTX = async () => {
+    try {
+      setIsExportingPPTX(true);
+      await exportPresentationType1ToPPTX(dataset, {
+        upcontaSocios: upcontaMembers,
+        franquiciaVIP: franquiciaMembers,
+        formacionComercial: formacionMembers,
+      });
+    } catch (e) {
+      console.error('Error generating PowerPoint file', e);
+    } finally {
+      setIsExportingPPTX(false);
+    }
+  };
 
   const activeMonthlyMetrics = (viewData.monthlyMetrics && viewData.monthlyMetrics.length > 0)
     ? viewData.monthlyMetrics
@@ -1117,7 +1237,7 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard,
                 <div className="flex items-center gap-2">
                   {isManuallyModified && (
                     <button
-                      onClick={() => setCustomCommunities({})}
+                      onClick={handleResetCommunities}
                       className="text-xs px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-400 border border-amber-500/30 flex items-center gap-1.5 transition-colors font-medium"
                       title="Restablecer a valores automáticos del Excel"
                     >
@@ -1149,12 +1269,29 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard,
                   <div className="flex items-center justify-between">
                     <h3 className="text-sm font-bold text-white">UpConta Socios</h3>
                     <span className="text-[10px] px-2 py-0.5 rounded bg-sky-500/20 text-sky-300 font-semibold">
-                      UpConnect Directo
+                      Distribuidor Upconnect
                     </span>
                   </div>
-                  <div className="text-3xl font-black text-sky-400 tabular-nums my-2">
-                    {upcontaMembers}
-                  </div>
+                  {isEditMode ? (
+                    <div className="my-1.5">
+                      <label className="text-[10px] text-sky-300 font-medium block">Cantidad UpConta Socios:</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={upcontaMembers}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value, 10) || 0;
+                          setCustomCommunities((prev) => ({ ...prev, upcontaSocios: val }));
+                          setEditValues((prev) => ({ ...prev, upcontaSocios: val }));
+                        }}
+                        className="w-full text-2xl font-black text-sky-400 bg-slate-950 border border-sky-500 rounded px-2 py-0.5 tabular-nums focus:outline-none"
+                      />
+                    </div>
+                  ) : (
+                    <div className="text-3xl font-black text-sky-400 tabular-nums my-2">
+                      {upcontaMembers}
+                    </div>
+                  )}
                   <div className="text-[11px] text-slate-400 font-medium">Socios Registrados</div>
                 </div>
                 <p className="text-[11px] text-slate-300 leading-relaxed border-t border-slate-800 pt-2 mt-1">
@@ -1168,13 +1305,30 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard,
                   <div className="flex items-center justify-between">
                     <h3 className="text-sm font-bold text-white">Franquicia Contadores VIP</h3>
                     <span className="text-[10px] px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 font-semibold">
-                      Distribuidor Connect Aliados
+                      Distribuidor Connect
                     </span>
                   </div>
-                  <div className="text-3xl font-black text-purple-400 tabular-nums my-2">
-                    {franquiciaMembers}
-                  </div>
-                  <div className="text-[11px] text-slate-400 font-medium">Socios Registrados</div>
+                  {isEditMode ? (
+                    <div className="my-1.5">
+                      <label className="text-[10px] text-purple-300 font-medium block">Cantidad de Franquiciados:</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={franquiciaMembers}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value, 10) || 0;
+                          setCustomCommunities((prev) => ({ ...prev, franquiciaVIP: val }));
+                          setEditValues((prev) => ({ ...prev, franquiciaVIP: val }));
+                        }}
+                        className="w-full text-2xl font-black text-purple-400 bg-slate-950 border border-purple-500 rounded px-2 py-0.5 tabular-nums focus:outline-none"
+                      />
+                    </div>
+                  ) : (
+                    <div className="text-3xl font-black text-purple-400 tabular-nums my-2">
+                      {franquiciaMembers}
+                    </div>
+                  )}
+                  <div className="text-[11px] text-slate-400 font-medium">Socios / Franquiciados Registrados</div>
                 </div>
                 <p className="text-[11px] text-slate-300 leading-relaxed border-t border-slate-800 pt-2 mt-1">
                   Grupo élite de contadores franquiciados y red externa Distribuidor Connect.
@@ -1190,9 +1344,26 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard,
                       Capacitación
                     </span>
                   </div>
-                  <div className="text-3xl font-black text-emerald-400 tabular-nums my-2">
-                    {formacionMembers}
-                  </div>
+                  {isEditMode ? (
+                    <div className="my-1.5">
+                      <label className="text-[10px] text-emerald-300 font-medium block">Miembros en Formación:</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={formacionMembers}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value, 10) || 0;
+                          setCustomCommunities((prev) => ({ ...prev, formacionComercial: val }));
+                          setEditValues((prev) => ({ ...prev, formacionComercial: val }));
+                        }}
+                        className="w-full text-2xl font-black text-emerald-400 bg-slate-950 border border-emerald-500 rounded px-2 py-0.5 tabular-nums focus:outline-none"
+                      />
+                    </div>
+                  ) : (
+                    <div className="text-3xl font-black text-emerald-400 tabular-nums my-2">
+                      {formacionMembers}
+                    </div>
+                  )}
                   <div className="text-[11px] text-slate-400 font-medium">Miembros en Formación</div>
                 </div>
                 <p className="text-[11px] text-slate-300 leading-relaxed border-t border-slate-800 pt-2 mt-1">
@@ -1204,7 +1375,7 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard,
             {/* TABLA ADICIONAL: Cantidad de Socios Distribuidor Upconnect vs Distribuidor Connect */}
             <div className="my-1">
               <SociosChannelTable
-                summary={viewData.sociosSummary}
+                summary={communitiesTableSummary}
                 variant="slide"
                 title="Distribución y Cantidad de Socios por Canal: Distribuidor Upconnect vs Distribuidor Connect"
               />
@@ -1243,15 +1414,15 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard,
                 <div className="px-3 py-1.5 rounded-xl bg-slate-900/90 border border-slate-700 text-right">
                   <div className="text-[9px] uppercase font-semibold text-slate-400">DISTRIBUCIÓN CANAL</div>
                   <div className="text-xs font-bold text-white tabular-nums">
-                    <span className="text-sky-400 font-extrabold">{viewData.sociosSummary.upconnect.count} UP</span>
+                    <span className="text-sky-400 font-extrabold">{viewData.firmaSociosSummary.upconnect.count} UP</span>
                     <span className="text-slate-500 mx-1">/</span>
-                    <span className="text-amber-400 font-extrabold">{viewData.sociosSummary.connectors.count} CO</span>
+                    <span className="text-amber-400 font-extrabold">{viewData.firmaSociosSummary.connectors.count} CO</span>
                   </div>
                 </div>
 
                 <div className="px-3.5 py-1.5 rounded-xl bg-slate-900/90 border border-slate-700 text-right">
                   <div className="text-[9px] uppercase font-semibold text-slate-400">CARTERA ACTIVA</div>
-                  <div className="text-sm font-bold text-white tabular-nums">{viewData.sociosSummary.totalSociosCount} Vendedores</div>
+                  <div className="text-sm font-bold text-white tabular-nums">{viewData.firmaSociosSummary.totalSociosCount} Vendedores</div>
                 </div>
 
                 <div className="px-3.5 py-1.5 rounded-xl bg-slate-900/90 border border-slate-700 text-right">
@@ -1287,7 +1458,7 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard,
                   }`}
                 >
                   <Users className="w-3.5 h-3.5" />
-                  <span>Resumen Canales ({viewData.sociosSummary.upconnect.count} UP / {viewData.sociosSummary.connectors.count} CONNECT)</span>
+                  <span>Resumen Canales ({viewData.firmaSociosSummary.upconnect.count} UP / {viewData.firmaSociosSummary.connectors.count} CONNECT)</span>
                 </button>
               </div>
             </div>
@@ -1296,7 +1467,7 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard,
             {sociosViewMode === 'channels' ? (
               <div className="my-auto py-2">
                 <SociosChannelTable
-                  summary={viewData.sociosSummary}
+                  summary={viewData.firmaSociosSummary}
                   variant="slide"
                   title="Cantidad y Rendimiento de Socios por Canal"
                 />
@@ -1320,7 +1491,7 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard,
                       {activeSocios.length === 0 ? (
                         <tr>
                           <td colSpan={7} className="py-8 text-center text-slate-500">
-                            Sin vendedores registrados. Cargue el archivo de firmas o socios en el Dashboard.
+                            Sin vendedores registrados. Cargue el archivo de firmas en el Dashboard.
                           </td>
                         </tr>
                       ) : (
@@ -1459,6 +1630,17 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard,
           >
             {isFullscreen ? <Minimize2 className="w-5 h-5" /> : <Maximize2 className="w-5 h-5" />}
           </button>
+
+          {onOpenOnlineReport && (
+            <button
+              onClick={onOpenOnlineReport}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded bg-sky-600 hover:bg-sky-500 text-white shadow-sm transition-colors"
+              title="Ver presentación unificada interactiva en línea con ambos reportes"
+            >
+              <MonitorPlay className="w-4 h-4 text-sky-200" />
+              <span>Reporte en Línea</span>
+            </button>
+          )}
 
           <button
             onClick={handleExportPPTX}
@@ -1599,7 +1781,7 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard,
             <div className="space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-300 mb-1">
-                  UpConta Socios (UpConnect Directo)
+                  UpConta Socios (Distribuidor Upconnect)
                 </label>
                 <div className="text-[11px] text-slate-500 mb-1.5">
                   Socios calculados en Excel: <strong className="text-sky-400">{autoUpSocios}</strong>
@@ -1615,7 +1797,7 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard,
 
               <div>
                 <label className="block text-xs font-semibold text-slate-300 mb-1">
-                  Franquicia Contadores VIP (Distribuidor Connect Aliados)
+                  Franquicia Contadores VIP (Distribuidor Connect)
                 </label>
                 <div className="text-[11px] text-slate-500 mb-1.5">
                   Socios calculados en Excel: <strong className="text-amber-400">{autoCoSocios}</strong>
@@ -1648,10 +1830,7 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard,
 
             <div className="flex items-center justify-between pt-3 border-t border-slate-800 gap-2">
               <button
-                onClick={() => {
-                  setCustomCommunities({});
-                  setIsEditingCommunities(false);
-                }}
+                onClick={handleResetCommunities}
                 className="text-xs px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors flex items-center gap-1.5 font-medium"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
@@ -1666,14 +1845,7 @@ export const PresentationType1: React.FC<Props> = ({ dataset, onBackToDashboard,
                   Cancelar
                 </button>
                 <button
-                  onClick={() => {
-                    setCustomCommunities({
-                      upcontaSocios: tempUpconta,
-                      franquiciaVIP: tempFranquicia,
-                      formacionComercial: tempFormacion,
-                    });
-                    setIsEditingCommunities(false);
-                  }}
+                  onClick={() => handleSaveCommunitiesModal(tempUpconta, tempFranquicia, tempFormacion)}
                   className="text-xs px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-bold transition-colors shadow-lg shadow-sky-600/30 flex items-center gap-1.5"
                 >
                   <Check className="w-3.5 h-3.5" />

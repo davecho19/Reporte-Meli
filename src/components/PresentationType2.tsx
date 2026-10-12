@@ -29,13 +29,17 @@ import {
   X,
   Sparkles,
   Zap,
-  Share2
+  Share2,
+  RotateCcw,
+  DollarSign,
+  MonitorPlay
 } from 'lucide-react';
 
 interface Props {
   dataset: GlobalDataset;
   onBackToDashboard?: () => void;
   onUpdateDataset?: (updated: Partial<GlobalDataset>) => void;
+  onOpenOnlineReport?: () => void;
 }
 
 interface SlideConfig2 {
@@ -44,7 +48,7 @@ interface SlideConfig2 {
   subtitle?: string;
 }
 
-export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard, onUpdateDataset }) => {
+export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard, onUpdateDataset, onOpenOnlineReport }) => {
   const [currentSlide, setCurrentSlide] = useState<number>(1);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [isExportingPPTX, setIsExportingPPTX] = useState<boolean>(false);
@@ -130,7 +134,7 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard,
   const handleExportPPTX = async () => {
     try {
       setIsExportingPPTX(true);
-      await exportPresentationType2ToPPTX(dataset);
+      await exportPresentationType2ToPPTX(dataset, customCommunities);
     } catch (e) {
       console.error('Error generating PowerPoint file', e);
     } finally {
@@ -144,9 +148,24 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard,
   const grossSales = viewData.grossSales;
   const activeSocios = viewData.socios;
 
-  const activeMonthlyMetrics = (viewData.monthlyMetrics && viewData.monthlyMetrics.length > 0)
-    ? viewData.monthlyMetrics
-    : dataset.monthlyMetrics;
+  const activeMonthlyMetrics = useMemo(() => {
+    const raw = (viewData.sistemasMonthlyMetrics && viewData.sistemasMonthlyMetrics.length > 0)
+      ? viewData.sistemasMonthlyMetrics
+      : (dataset.sistemasMonthlyMetrics || []);
+    if (dataset.reportFilter?.type === 'month' && dataset.reportFilter.month) {
+      const targetMonth = dataset.reportFilter.month.toUpperCase();
+      const filtered = raw.filter((m) => m.month.toUpperCase() === targetMonth);
+      if (filtered.length > 0) return filtered;
+      return [{
+        month: targetMonth,
+        upconnectSales: viewData.sociosSummary.upconnect.totalSales,
+        connectorsSales: viewData.sociosSummary.connectors.totalSales,
+        upconnectCount: viewData.sociosSummary.upconnect.operationsCount,
+        connectorsCount: viewData.sociosSummary.connectors.operationsCount,
+      }];
+    }
+    return raw;
+  }, [viewData.sistemasMonthlyMetrics, dataset.sistemasMonthlyMetrics, dataset.reportFilter, viewData.sociosSummary]);
 
   const auditMonthly = activeMonthlyMetrics.length > 0
     ? activeMonthlyMetrics.map((m, _, arr) => {
@@ -171,7 +190,162 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard,
 
   const totalWeeklySales = activeWeekly.reduce((a, b) => a + b.amount, 0);
 
-  const activeCategories: SolutionCategory[] = dataset.solutionCategories || [];
+  const activeCategories: SolutionCategory[] = (viewData.solutionCategoriesReport2 && viewData.solutionCategoriesReport2.length > 0)
+    ? viewData.solutionCategoriesReport2
+    : (dataset.solutionCategories || []);
+
+  // Weekly Line Chart State (Pestaña 5)
+  const [weeklyMetric, setWeeklyMetric] = useState<'sales' | 'count'>('sales');
+  const [hoveredWeekIndex, setHoveredWeekIndex] = useState<number | null>(null);
+
+  // Communities / Embudo State & Calculations (Pestaña 7)
+  const autoUpSocios = viewData.sociosSummary.upconnect.count || 118;
+  const autoCoSocios = viewData.sociosSummary.connectors.count || 129;
+  const autoFormacion = Math.max(1, Math.round((autoUpSocios + autoCoSocios) * 0.25)) || 51;
+
+  const [customCommunities, setCustomCommunities] = useState<{
+    upcontaSocios?: number;
+    franquiciaVIP?: number;
+    formacionComercial?: number;
+  }>(() => {
+    const ov = dataset.customOverrides || {};
+    return {
+      upcontaSocios: ov['r2_upcontaSocios'] !== undefined ? Number(ov['r2_upcontaSocios']) : (ov['upcontaSocios'] !== undefined ? Number(ov['upcontaSocios']) : undefined),
+      franquiciaVIP: ov['r2_franquiciaVIP'] !== undefined ? Number(ov['r2_franquiciaVIP']) : (ov['franquiciaVIP'] !== undefined ? Number(ov['franquiciaVIP']) : undefined),
+      formacionComercial: ov['r2_formacionComercial'] !== undefined ? Number(ov['r2_formacionComercial']) : (ov['formacionComercial'] !== undefined ? Number(ov['formacionComercial']) : undefined),
+    };
+  });
+
+  useEffect(() => {
+    const ov = dataset.customOverrides || {};
+    if (ov['r2_upcontaSocios'] !== undefined || ov['r2_franquiciaVIP'] !== undefined || ov['r2_formacionComercial'] !== undefined ||
+        ov['upcontaSocios'] !== undefined || ov['franquiciaVIP'] !== undefined || ov['formacionComercial'] !== undefined) {
+      setCustomCommunities((prev) => ({
+        ...prev,
+        upcontaSocios: ov['r2_upcontaSocios'] !== undefined ? Number(ov['r2_upcontaSocios']) : (ov['upcontaSocios'] !== undefined ? Number(ov['upcontaSocios']) : prev.upcontaSocios),
+        franquiciaVIP: ov['r2_franquiciaVIP'] !== undefined ? Number(ov['r2_franquiciaVIP']) : (ov['franquiciaVIP'] !== undefined ? Number(ov['franquiciaVIP']) : prev.franquiciaVIP),
+        formacionComercial: ov['r2_formacionComercial'] !== undefined ? Number(ov['r2_formacionComercial']) : (ov['formacionComercial'] !== undefined ? Number(ov['formacionComercial']) : prev.formacionComercial),
+      }));
+    }
+  }, [dataset.customOverrides]);
+
+  const [isEditingCommunities, setIsEditingCommunities] = useState<boolean>(false);
+  const [tempUpconta, setTempUpconta] = useState<number>(0);
+  const [tempFranquicia, setTempFranquicia] = useState<number>(0);
+  const [tempFormacion, setTempFormacion] = useState<number>(0);
+
+  const upcontaMembers = editValues['r2_upcontaSocios'] !== undefined
+    ? Number(editValues['r2_upcontaSocios'])
+    : (customCommunities.upcontaSocios ?? (autoUpSocios > 0 ? autoUpSocios : 118));
+
+  const franquiciaMembers = editValues['r2_franquiciaVIP'] !== undefined
+    ? Number(editValues['r2_franquiciaVIP'])
+    : (customCommunities.franquiciaVIP ?? (autoCoSocios > 0 ? autoCoSocios : 129));
+
+  const formacionMembers = editValues['r2_formacionComercial'] !== undefined
+    ? Number(editValues['r2_formacionComercial'])
+    : (customCommunities.formacionComercial ?? (autoCoSocios > 0 ? autoFormacion : 51));
+
+  const isManuallyModified =
+    customCommunities.upcontaSocios !== undefined ||
+    customCommunities.franquiciaVIP !== undefined ||
+    customCommunities.formacionComercial !== undefined ||
+    editValues['r2_upcontaSocios'] !== undefined ||
+    editValues['r2_franquiciaVIP'] !== undefined ||
+    editValues['r2_formacionComercial'] !== undefined ||
+    editValues['upcontaSocios'] !== undefined ||
+    editValues['franquiciaVIP'] !== undefined ||
+    editValues['formacionComercial'] !== undefined;
+
+  const handleSaveCommunitiesModal = (up: number, vip: number, form: number) => {
+    const updated = {
+      r2_upcontaSocios: up,
+      r2_franquiciaVIP: vip,
+      r2_formacionComercial: form,
+      upcontaSocios: up,
+      franquiciaVIP: vip,
+      formacionComercial: form,
+    };
+    setCustomCommunities(updated);
+    setEditValues((prev) => ({
+      ...prev,
+      ...updated,
+    }));
+    if (onUpdateDataset) {
+      onUpdateDataset({
+        customOverrides: {
+          ...(dataset.customOverrides || {}),
+          ...updated,
+        },
+      });
+    }
+    setIsEditingCommunities(false);
+  };
+
+  const handleResetCommunities = () => {
+    setCustomCommunities({});
+    const newOverrides = { ...(dataset.customOverrides || {}) };
+    delete newOverrides.r2_upcontaSocios;
+    delete newOverrides.r2_franquiciaVIP;
+    delete newOverrides.r2_formacionComercial;
+    delete newOverrides.upcontaSocios;
+    delete newOverrides.franquiciaVIP;
+    delete newOverrides.formacionComercial;
+    setEditValues(newOverrides);
+    if (onUpdateDataset) {
+      onUpdateDataset({ customOverrides: newOverrides });
+    }
+  };
+
+  // Dynamic Communities Channel Table Summary for Slide 7:
+  // Updates immediately when upcontaMembers or franquiciaMembers change
+  const communitiesTableSummary = useMemo(() => {
+    const upCount = upcontaMembers;
+    const coCount = franquiciaMembers;
+    const totalMembers = upCount + coCount;
+    const upPct = totalMembers > 0 ? parseFloat(((upCount / totalMembers) * 100).toFixed(1)) : 0;
+    const coPct = totalMembers > 0 ? parseFloat(((coCount / totalMembers) * 100).toFixed(1)) : 0;
+
+    const baseSummary = viewData.sociosSummary;
+    const upOps = baseSummary.upconnect.operationsCount;
+    const coOps = baseSummary.connectors.operationsCount;
+    const totalOps = baseSummary.totalOperationsCount;
+
+    const upNetSales = baseSummary.upconnect.totalSales;
+    const coNetSales = baseSummary.connectors.totalSales;
+    const allSales = baseSummary.totalSales;
+
+    const upAvgTicket = upOps > 0 ? parseFloat((upNetSales / upOps).toFixed(2)) : (upCount > 0 ? parseFloat((upNetSales / upCount).toFixed(2)) : 0);
+    const coAvgTicket = coOps > 0 ? parseFloat((coNetSales / coOps).toFixed(2)) : (coCount > 0 ? parseFloat((coNetSales / coCount).toFixed(2)) : 0);
+    const avgTicket = totalOps > 0 ? parseFloat((allSales / totalOps).toFixed(2)) : 0;
+
+    return {
+      upconnect: {
+        channel: 'UpConnect' as const,
+        channelLabel: 'Distribuidor Upconnect',
+        count: upCount,
+        percentage: upPct,
+        operationsCount: upOps,
+        totalSales: upNetSales,
+        averageTicket: upAvgTicket,
+        socios: activeSocios.filter((s) => s.channel === 'UpConnect'),
+      },
+      connectors: {
+        channel: 'Connectors' as const,
+        channelLabel: 'Distribuidor Connect',
+        count: coCount,
+        percentage: coPct,
+        operationsCount: coOps,
+        totalSales: coNetSales,
+        averageTicket: coAvgTicket,
+        socios: activeSocios.filter((s) => s.channel === 'Connectors'),
+      },
+      totalSociosCount: totalMembers,
+      totalOperationsCount: totalOps,
+      totalSales: allSales,
+      averageTicket: avgTicket,
+    };
+  }, [upcontaMembers, franquiciaMembers, viewData.sociosSummary, activeSocios]);
 
   const currentSlideDef = activeSlides[currentSlide - 1] || activeSlides[0];
 
@@ -245,6 +419,17 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard,
           >
             {isFullscreen ? <Minimize2 className="w-5 h-5" /> : <Maximize2 className="w-5 h-5" />}
           </button>
+
+          {onOpenOnlineReport && (
+            <button
+              onClick={onOpenOnlineReport}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded bg-sky-600 hover:bg-sky-500 text-white shadow-sm transition-colors"
+              title="Ver presentación unificada interactiva en línea con ambos reportes"
+            >
+              <MonitorPlay className="w-4 h-4 text-sky-200" />
+              <span>Reporte en Línea</span>
+            </button>
+          )}
 
           <button
             onClick={handleExportPPTX}
@@ -428,7 +613,7 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard,
                 </div>
 
                 <div className="pt-2 text-xs text-slate-500">
-                  Período Activo: <strong className="text-slate-300">{viewData.periodLabel}</strong> · Fecha de Corte: <strong className="text-slate-300">{dataset.cutoffDate}</strong>
+                  Período Activo: <strong className="text-slate-300">{viewData.periodLabel}</strong> · Fecha de Corte: <strong className="text-slate-300">{viewData.cutoffDateReport2}</strong>
                 </div>
               </div>
 
@@ -506,14 +691,14 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard,
               <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-800 text-xs text-slate-300 flex items-center justify-between">
                 <div>
                   <strong className="text-emerald-400">Conclusión de Auditoría:</strong> El período{' '}
-                  <strong className="text-white">{viewData.periodLabel}</strong> registra un promedio diario de{' '}
+                  <strong className="text-white">{viewData.periodLabel}</strong> registra un promedio de{' '}
                   <strong className="text-white">
-                    ${((netSales / Math.max(1, viewData.totalCount)) || 0).toFixed(2)} USD
+                    ${((netSales / Math.max(1, activeSocios.reduce((a, s) => a + (s.operationsCount || 1), 0))) || 0).toFixed(2)} USD
                   </strong>{' '}
                   por transacción sobre una cartera auditada de{' '}
                   <strong className="text-sky-400">{activeSocios.length} socios comerciales</strong>.
                 </div>
-                <span className="text-slate-500">Corte: {dataset.cutoffDate}</span>
+                <span className="text-slate-500">Corte: {viewData.cutoffDateReport2}</span>
               </div>
             </div>
           )}
@@ -583,7 +768,7 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard,
               {/* Bottom Insight */}
               <div className="p-3.5 rounded-xl bg-slate-900/90 border border-slate-800 text-xs text-slate-300 flex items-center justify-between">
                 <div>
-                  <strong className="text-emerald-400">Total Acumulado Registrado:</strong>{' '}
+                  <strong className="text-emerald-400">Total {viewData.isFiltered ? `del Período (${viewData.periodLabel})` : 'Acumulado Registrado'}:</strong>{' '}
                   <strong className="text-white">
                     ${auditMonthly.reduce((a, b) => a + b.total, 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
                   </strong>
@@ -748,7 +933,7 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard,
                     <div className="p-3 rounded-xl bg-slate-950/80 border-t-2 border-amber-500 border-x border-b border-slate-800">
                       <div className="flex items-center gap-1.5 text-xs font-bold text-amber-400 mb-1">
                         <Share2 className="w-3.5 h-3.5" />
-                        <span>Distribuidor Connect Aliados</span>
+                        <span>Distribuidor Connect</span>
                       </div>
                       <div className="text-xl font-black text-white tabular-nums">
                         ${viewData.sociosSummary.connectors.totalSales.toLocaleString('en-US', { minimumFractionDigits: 2 })}
@@ -796,7 +981,7 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard,
                       <span className="font-bold text-emerald-400">${viewData.sociosSummary.upconnect.totalSales.toFixed(2)}</span>
                     </div>
                     <div className="grid grid-cols-4 p-1.5 text-center text-slate-200">
-                      <span className="font-bold text-amber-400">Connectors</span>
+                      <span className="font-bold text-amber-400">Connect</span>
                       <span>{viewData.sociosSummary.connectors.count}</span>
                       <span>{viewData.sociosSummary.connectors.operationsCount}</span>
                       <span className="font-bold text-emerald-400">${viewData.sociosSummary.connectors.totalSales.toFixed(2)}</span>
@@ -825,80 +1010,451 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard,
             </div>
           )}
 
-          {/* SLIDE 5: Foco de Rendimiento Mensual: Desglose Semana a Semana */}
-          {currentSlideDef.id === 'weekly' && (
-            <div className="h-full flex flex-col justify-between p-8 sm:p-12 relative bg-[#0c1322]">
-              <div>
-                <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">
-                  FOCO SEMANAL · AUDITORÍA DETALLADA
-                </span>
-                <h2 className="text-2xl sm:text-3xl font-black text-white tracking-tight mt-0.5">
-                  Foco de Rendimiento: Desglose Semana a Semana
-                </h2>
-                <p className="text-xs text-slate-400 mt-1">
-                  Distribución exacta de facturación por semana acorde a las fechas del período activo ({viewData.periodLabel})
-                </p>
-              </div>
+          {/* SLIDE 5: Foco de Rendimiento Mensual: Desglose Semana a Semana con Gráficos Estadísticos Lineales */}
+          {currentSlideDef.id === 'weekly' && (() => {
+            const diffs = (viewData.weeklyDifferentiators && viewData.weeklyDifferentiators.length > 0)
+              ? viewData.weeklyDifferentiators
+              : [
+                  { weekId: 'w1', weekName: 'Semana 1', dateRange: '01 al 06', totalSales: 0, totalCount: 0, facturacionSales: 0, facturacionCount: 0, erpSales: 0, erpCount: 0, contadoresSales: 0, contadoresCount: 0 },
+                  { weekId: 'w2', weekName: 'Semana 2', dateRange: '07 al 13', totalSales: 0, totalCount: 0, facturacionSales: 0, facturacionCount: 0, erpSales: 0, erpCount: 0, contadoresSales: 0, contadoresCount: 0 },
+                  { weekId: 'w3', weekName: 'Semana 3', dateRange: '14 al 20', totalSales: 0, totalCount: 0, facturacionSales: 0, facturacionCount: 0, erpSales: 0, erpCount: 0, contadoresSales: 0, contadoresCount: 0 },
+                  { weekId: 'w4', weekName: 'Semana 4', dateRange: '21 al 31', totalSales: 0, totalCount: 0, facturacionSales: 0, facturacionCount: 0, erpSales: 0, erpCount: 0, contadoresSales: 0, contadoresCount: 0 },
+                ];
 
-              {/* 4 Weekly KPI Cards */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 my-auto">
-                {activeWeekly.length === 0 ? (
-                  <div className="col-span-4 py-8 text-center text-slate-500 text-sm">
-                    Sin desglose semanal disponible para el período actual.
+            const totFact = diffs.reduce((a, b) => a + (weeklyMetric === 'sales' ? b.facturacionSales : b.facturacionCount), 0);
+            const totErp = diffs.reduce((a, b) => a + (weeklyMetric === 'sales' ? b.erpSales : b.erpCount), 0);
+            const totCont = diffs.reduce((a, b) => a + (weeklyMetric === 'sales' ? b.contadoresSales : b.contadoresCount), 0);
+            const totCombined = totFact + totErp + totCont || 1;
+
+            // Coordinate calculations for responsive SVG
+            const svgW = 760;
+            const svgH = 175;
+            const padL = 65;
+            const padR = 40;
+            const padT = 22;
+            const padB = 35;
+            const plotW = svgW - padL - padR;
+            const plotH = svgH - padT - padB;
+
+            const xPoints = diffs.map((_, i) => padL + (i / Math.max(1, diffs.length - 1)) * plotW);
+
+            const allVals = diffs.flatMap((d) => 
+              weeklyMetric === 'sales' 
+                ? [d.facturacionSales, d.erpSales, d.contadoresSales]
+                : [d.facturacionCount, d.erpCount, d.contadoresCount]
+            );
+            const maxVal = Math.max(...allVals, 10);
+            const scaleMax = maxVal * 1.18;
+
+            const getY = (val: number) => padT + plotH - (val / scaleMax) * plotH;
+
+            const factPoints = diffs.map((d, i) => ({
+              x: xPoints[i],
+              y: getY(weeklyMetric === 'sales' ? d.facturacionSales : d.facturacionCount),
+              val: weeklyMetric === 'sales' ? d.facturacionSales : d.facturacionCount,
+            }));
+
+            const erpPoints = diffs.map((d, i) => ({
+              x: xPoints[i],
+              y: getY(weeklyMetric === 'sales' ? d.erpSales : d.erpCount),
+              val: weeklyMetric === 'sales' ? d.erpSales : d.erpCount,
+            }));
+
+            const contPoints = diffs.map((d, i) => ({
+              x: xPoints[i],
+              y: getY(weeklyMetric === 'sales' ? d.contadoresSales : d.contadoresCount),
+              val: weeklyMetric === 'sales' ? d.contadoresSales : d.contadoresCount,
+            }));
+
+            const makePolyline = (pts: { x: number; y: number }[]) => pts.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
+            const makeArea = (pts: { x: number; y: number }[]) => {
+              const base = `${pts[0].x.toFixed(1)},${(padT + plotH).toFixed(1)}`;
+              const line = pts.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
+              const end = `${pts[pts.length - 1].x.toFixed(1)},${(padT + plotH).toFixed(1)}`;
+              return `${base} ${line} ${end}`;
+            };
+
+            const gridSteps = [0, 0.33, 0.66, 1];
+
+            return (
+              <div className="h-full flex flex-col justify-between p-6 sm:p-8 relative bg-[#0c1322]">
+                {/* Header */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800/80 pb-2.5">
+                  <div>
+                    <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">
+                      COMPARATIVA SEMANA A SEMANA · AUDITORÍA POR DIFERENCIADOR
+                    </span>
+                    <h2 className="text-xl sm:text-2xl font-bold text-white tracking-tight mt-0.5">
+                      Foco de Rendimiento: Desglose y Gráficos Lineales
+                    </h2>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Comparativa estadística semanal según diferenciadores: Planes de Facturación, ERP y Contadores ({viewData.periodLabel})
+                    </p>
                   </div>
-                ) : (
-                  activeWeekly.map((w, idx) => {
+
+                  {/* Metric Switcher */}
+                  <div className="flex items-center gap-2 bg-slate-900/90 p-1 rounded-xl border border-slate-800 text-xs">
+                    <button
+                      onClick={() => setWeeklyMetric('sales')}
+                      className={`px-3 py-1 rounded-lg font-semibold flex items-center gap-1.5 transition-all ${
+                        weeklyMetric === 'sales'
+                          ? 'bg-emerald-500 text-white shadow-md shadow-emerald-500/30'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <DollarSign className="w-3.5 h-3.5" />
+                      <span>Facturación ($ USD)</span>
+                    </button>
+                    <button
+                      onClick={() => setWeeklyMetric('count')}
+                      className={`px-3 py-1 rounded-lg font-semibold flex items-center gap-1.5 transition-all ${
+                        weeklyMetric === 'count'
+                          ? 'bg-sky-500 text-white shadow-md shadow-sky-500/30'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <Activity className="w-3.5 h-3.5" />
+                      <span>Volumen (Operaciones)</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Linear Chart Section */}
+                <div className="bg-slate-900/90 rounded-2xl border border-slate-800 p-4 shadow-xl my-2 flex flex-col justify-between">
+                  {/* Chart Legend & KPI Summary */}
+                  <div className="flex flex-wrap items-center justify-between gap-3 pb-2 border-b border-slate-800/60 text-xs">
+                    <div className="flex items-center gap-4">
+                      {/* Facturación */}
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-3 h-1 rounded bg-sky-400"></span>
+                        <span className="text-slate-300 font-medium">Planes de Facturación:</span>
+                        <strong className="text-sky-300 font-bold tabular-nums">
+                          {weeklyMetric === 'sales' ? `$${totFact.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : `${totFact} ops`}
+                        </strong>
+                        <span className="text-[10px] text-slate-500 font-semibold">({((totFact / totCombined) * 100).toFixed(1)}%)</span>
+                      </div>
+
+                      {/* ERP */}
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-3 h-1 rounded bg-emerald-400"></span>
+                        <span className="text-slate-300 font-medium">Sistemas ERP:</span>
+                        <strong className="text-emerald-300 font-bold tabular-nums">
+                          {weeklyMetric === 'sales' ? `$${totErp.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : `${totErp} ops`}
+                        </strong>
+                        <span className="text-[10px] text-slate-500 font-semibold">({((totErp / totCombined) * 100).toFixed(1)}%)</span>
+                      </div>
+
+                      {/* Contadores */}
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-3 h-1 rounded bg-purple-400"></span>
+                        <span className="text-slate-300 font-medium">Planes Contadores:</span>
+                        <strong className="text-purple-300 font-bold tabular-nums">
+                          {weeklyMetric === 'sales' ? `$${totCont.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : `${totCont} ops`}
+                        </strong>
+                        <span className="text-[10px] text-slate-500 font-semibold">({((totCont / totCombined) * 100).toFixed(1)}%)</span>
+                      </div>
+                    </div>
+
+                    <div className="text-[11px] text-slate-400">
+                      Pasa el cursor sobre cada semana para ver la comparativa detallada
+                    </div>
+                  </div>
+
+                  {/* SVG Multi-Line Statistical Chart */}
+                  <div className="relative w-full h-[175px] mt-2">
+                    <svg viewBox={`0 0 ${svgW} ${svgH}`} className="w-full h-full overflow-visible">
+                      <defs>
+                        <linearGradient id="gradFact" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#38bdf8" stopOpacity="0.25" />
+                          <stop offset="100%" stopColor="#38bdf8" stopOpacity="0.0" />
+                        </linearGradient>
+                        <linearGradient id="gradErp" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#10b981" stopOpacity="0.25" />
+                          <stop offset="100%" stopColor="#10b981" stopOpacity="0.0" />
+                        </linearGradient>
+                        <linearGradient id="gradCont" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#a855f7" stopOpacity="0.25" />
+                          <stop offset="100%" stopColor="#a855f7" stopOpacity="0.0" />
+                        </linearGradient>
+                      </defs>
+
+                      {/* Horizontal Grid Lines & Y Axis Labels */}
+                      {gridSteps.map((step, sIdx) => {
+                        const val = scaleMax * step;
+                        const y = padT + plotH - step * plotH;
+                        const label = weeklyMetric === 'sales'
+                          ? `$${Math.round(val).toLocaleString('en-US')}`
+                          : `${Math.round(val)}`;
+                        return (
+                          <g key={sIdx}>
+                            <line
+                              x1={padL}
+                              x2={svgW - padR}
+                              y1={y}
+                              y2={y}
+                              stroke="#1e293b"
+                              strokeDasharray="3 3"
+                              strokeWidth="1"
+                            />
+                            <text
+                              x={padL - 10}
+                              y={y + 3.5}
+                              textAnchor="end"
+                              fill="#64748b"
+                              fontSize="9.5"
+                              fontFamily="monospace"
+                            >
+                              {label}
+                            </text>
+                          </g>
+                        );
+                      })}
+
+                      {/* Gradient Areas */}
+                      <polygon points={makeArea(factPoints)} fill="url(#gradFact)" />
+                      <polygon points={makeArea(erpPoints)} fill="url(#gradErp)" />
+                      <polygon points={makeArea(contPoints)} fill="url(#gradCont)" />
+
+                      {/* Polylines */}
+                      <polyline
+                        points={makePolyline(factPoints)}
+                        fill="none"
+                        stroke="#38bdf8"
+                        strokeWidth="2.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                      <polyline
+                        points={makePolyline(erpPoints)}
+                        fill="none"
+                        stroke="#10b981"
+                        strokeWidth="2.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                      <polyline
+                        points={makePolyline(contPoints)}
+                        fill="none"
+                        stroke="#a855f7"
+                        strokeWidth="2.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+
+                      {/* Hover guideline */}
+                      {hoveredWeekIndex !== null && (
+                        <line
+                          x1={xPoints[hoveredWeekIndex]}
+                          x2={xPoints[hoveredWeekIndex]}
+                          y1={padT}
+                          y2={padT + plotH}
+                          stroke="#94a3b8"
+                          strokeDasharray="2 2"
+                          strokeWidth="1.5"
+                          opacity="0.8"
+                        />
+                      )}
+
+                      {/* Dots & X-axis Labels */}
+                      {diffs.map((d, idx) => {
+                        const isHovered = hoveredWeekIndex === idx;
+                        const fp = factPoints[idx];
+                        const ep = erpPoints[idx];
+                        const cp = contPoints[idx];
+
+                        return (
+                          <g key={idx}>
+                            {/* Hover transparent hit column */}
+                            <rect
+                              x={xPoints[idx] - 40}
+                              y={padT - 10}
+                              width="80"
+                              height={plotH + 40}
+                              fill="transparent"
+                              className="cursor-pointer"
+                              onMouseEnter={() => setHoveredWeekIndex(idx)}
+                              onMouseLeave={() => setHoveredWeekIndex(null)}
+                            />
+
+                            {/* Facturación Dot */}
+                            <circle
+                              cx={fp.x}
+                              cy={fp.y}
+                              r={isHovered ? 6 : 4}
+                              fill="#0f172a"
+                              stroke="#38bdf8"
+                              strokeWidth={isHovered ? 3 : 2}
+                              className="transition-all"
+                            />
+
+                            {/* ERP Dot */}
+                            <circle
+                              cx={ep.x}
+                              cy={ep.y}
+                              r={isHovered ? 6 : 4}
+                              fill="#0f172a"
+                              stroke="#10b981"
+                              strokeWidth={isHovered ? 3 : 2}
+                              className="transition-all"
+                            />
+
+                            {/* Contadores Dot */}
+                            <circle
+                              cx={cp.x}
+                              cy={cp.y}
+                              r={isHovered ? 6 : 4}
+                              fill="#0f172a"
+                              stroke="#a855f7"
+                              strokeWidth={isHovered ? 3 : 2}
+                              className="transition-all"
+                            />
+
+                            {/* X Axis Labels */}
+                            <text
+                              x={xPoints[idx]}
+                              y={padT + plotH + 15}
+                              textAnchor="middle"
+                              fill={isHovered ? '#ffffff' : '#cbd5e1'}
+                              fontSize="11"
+                              fontWeight={isHovered ? 'bold' : '600'}
+                            >
+                              {d.weekName}
+                            </text>
+                            <text
+                              x={xPoints[idx]}
+                              y={padT + plotH + 28}
+                              textAnchor="middle"
+                              fill="#64748b"
+                              fontSize="9.5"
+                            >
+                              {d.dateRange}
+                            </text>
+                          </g>
+                        );
+                      })}
+                    </svg>
+
+                    {/* Floating Tooltip when hovering */}
+                    {hoveredWeekIndex !== null && diffs[hoveredWeekIndex] && (() => {
+                      const hw = diffs[hoveredWeekIndex];
+                      const leftPos = Math.min(Math.max(xPoints[hoveredWeekIndex] - 80, 20), svgW - 200);
+                      return (
+                        <div
+                          style={{ left: `${(leftPos / svgW) * 100}%`, top: '-8px' }}
+                          className="absolute z-20 pointer-events-none bg-slate-950/95 border border-slate-700 rounded-xl p-2.5 shadow-2xl backdrop-blur-md text-[11px] space-y-1 w-48 transition-all"
+                        >
+                          <div className="font-bold text-white border-b border-slate-800 pb-1 flex justify-between">
+                            <span>{hw.weekName}</span>
+                            <span className="text-slate-400 font-normal">{hw.dateRange}</span>
+                          </div>
+                          <div className="flex justify-between items-center text-sky-400">
+                            <span>Facturación:</span>
+                            <strong className="font-mono">
+                              {weeklyMetric === 'sales' ? `$${hw.facturacionSales.toFixed(2)}` : `${hw.facturacionCount} ops`}
+                            </strong>
+                          </div>
+                          <div className="flex justify-between items-center text-emerald-400">
+                            <span>Sistemas ERP:</span>
+                            <strong className="font-mono">
+                              {weeklyMetric === 'sales' ? `$${hw.erpSales.toFixed(2)}` : `${hw.erpCount} ops`}
+                            </strong>
+                          </div>
+                          <div className="flex justify-between items-center text-purple-400">
+                            <span>Contadores:</span>
+                            <strong className="font-mono">
+                              {weeklyMetric === 'sales' ? `$${hw.contadoresSales.toFixed(2)}` : `${hw.contadoresCount} ops`}
+                            </strong>
+                          </div>
+                          <div className="border-t border-slate-800 pt-1 flex justify-between items-center font-bold text-white">
+                            <span>Total Semana:</span>
+                            <span className="text-emerald-400 font-mono">
+                              {weeklyMetric === 'sales' ? `$${hw.totalSales.toFixed(2)} USD` : `${hw.totalCount} ops`}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
+
+                {/* 4 Weekly KPI Cards */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 my-1">
+                  {diffs.map((w, idx) => {
                     const wKey = `r2_week_${idx}_amount`;
-                    const currentAmt = editValues[wKey] !== undefined ? Number(editValues[wKey]) : w.amount;
+                    const currentAmt = editValues[wKey] !== undefined ? Number(editValues[wKey]) : w.totalSales;
+                    const weekPct = totalWeeklySales > 0 ? ((w.totalSales / totalWeeklySales) * 100).toFixed(1) : '25.0';
 
                     return (
-                      <div key={idx} className="p-4 rounded-xl bg-slate-900/90 border border-slate-800 shadow-xl flex flex-col justify-between">
-                        <div>
-                          <div className="flex items-center justify-between text-xs mb-1">
-                            <span className="font-bold text-sky-400">{w.weekName}</span>
-                            <span className="text-[11px] text-slate-400">{w.dateRange}</span>
-                          </div>
-                          <div className="text-2xl font-black text-white tabular-nums my-1">
-                            {isEditMode ? (
-                              <div className="flex items-center gap-1">
-                                <span className="text-xs text-slate-400">$</span>
-                                <input
-                                  type="number"
-                                  step="any"
-                                  value={currentAmt}
-                                  onChange={(e) => setEditValues({ ...editValues, [wKey]: parseFloat(e.target.value) || 0 })}
-                                  className="w-24 bg-slate-950 border border-emerald-500 rounded px-1.5 py-0.5 text-xs text-emerald-400 font-bold"
-                                />
-                              </div>
-                            ) : (
-                              `$${w.amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                            )}
-                          </div>
-                          <div className="text-xs font-semibold text-emerald-400">{w.percentage}% del total</div>
+                      <div
+                        key={idx}
+                        className={`p-3 rounded-xl border transition-all ${
+                          hoveredWeekIndex === idx
+                            ? 'bg-slate-900 border-sky-500/60 shadow-lg'
+                            : 'bg-slate-900/80 border-slate-800'
+                        }`}
+                        onMouseEnter={() => setHoveredWeekIndex(idx)}
+                        onMouseLeave={() => setHoveredWeekIndex(null)}
+                      >
+                        <div className="flex items-center justify-between text-xs mb-1">
+                          <span className="font-bold text-white">{w.weekName}</span>
+                          <span className="text-[10px] text-slate-400">{w.dateRange}</span>
                         </div>
 
-                        <div className="pt-3 border-t border-slate-800 text-[11px] text-slate-400">
-                          {w.description || 'Emisiones registradas'}
+                        <div className="text-xl font-black text-white tabular-nums my-1">
+                          {isEditMode ? (
+                            <div className="flex items-center gap-1">
+                              <span className="text-xs text-slate-400">$</span>
+                              <input
+                                type="number"
+                                step="any"
+                                value={currentAmt}
+                                onChange={(e) => setEditValues({ ...editValues, [wKey]: parseFloat(e.target.value) || 0 })}
+                                className="w-24 bg-slate-950 border border-emerald-500 rounded px-1.5 py-0.5 text-xs text-emerald-400 font-bold"
+                              />
+                            </div>
+                          ) : (
+                            `$${w.totalSales.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                          )}
+                        </div>
+
+                        <div className="text-[10px] font-semibold text-emerald-400 mb-2">
+                          {weekPct}% del total del período
+                        </div>
+
+                        {/* Breakdown pills */}
+                        <div className="space-y-1 text-[10px] border-t border-slate-800 pt-1.5 text-slate-300">
+                          <div className="flex justify-between items-center">
+                            <span className="text-sky-400">Facturación:</span>
+                            <span className="font-mono text-slate-300">${w.facturacionSales.toFixed(2)}</span>
+                          </div>
+                          <div className="flex justify-between items-center">
+                            <span className="text-emerald-400">ERP:</span>
+                            <span className="font-mono text-slate-300">${w.erpSales.toFixed(2)}</span>
+                          </div>
+                          <div className="flex justify-between items-center">
+                            <span className="text-purple-400">Contadores:</span>
+                            <span className="font-mono text-slate-300">${w.contadoresSales.toFixed(2)}</span>
+                          </div>
                         </div>
                       </div>
                     );
-                  })
-                )}
-              </div>
-
-              {/* Bottom Insight */}
-              <div className="p-3.5 rounded-xl bg-slate-900/90 border border-slate-800 text-xs text-slate-300 flex items-center justify-between">
-                <div>
-                  <strong className="text-emerald-400">Total Semanal Auditado:</strong>{' '}
-                  <strong className="text-white">
-                    ${totalWeeklySales.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
-                  </strong>{' '}
-                  (Consistente al 100% con la facturación de sistemas por socio).
+                  })}
                 </div>
-                <span className="text-slate-400">{activeWeekly.length} semanas auditadas</span>
+
+                {/* Bottom Insight */}
+                <div className="p-3 rounded-xl bg-slate-900/90 border border-slate-800 text-xs text-slate-300 flex items-center justify-between">
+                  <div>
+                    <strong className="text-emerald-400">Total Semanal Auditado:</strong>{' '}
+                    <strong className="text-white">
+                      ${totalWeeklySales.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
+                    </strong>{' '}
+                    ({activeWeekly.length} semanas auditadas). Consistente al 100% con la facturación de sistemas por socio.
+                  </div>
+                  <span className="text-slate-400">{viewData.periodLabel}</span>
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* SLIDE 6: Ventas por Categoría de Solución */}
           {currentSlideDef.id === 'solutions' && (
@@ -960,16 +1516,43 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard,
           {/* SLIDE 7: Canal de Distribución - Embudo de Socios */}
           {currentSlideDef.id === 'funnel' && (
             <div className="h-full flex flex-col justify-between p-6 sm:p-8 relative bg-[#0c1322]">
-              <div>
-                <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">
-                  CANAL DE DISTRIBUCIÓN · {viewData.periodLabel.toUpperCase()}
-                </span>
-                <h2 className="text-xl sm:text-2xl font-bold text-white tracking-tight mt-0.5">
-                  Embudo de Socios y Comunidades Activas
-                </h2>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  Conteo cuantitativo de socios, franquiciados UpConta y red de distribuidores Connect
-                </p>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">
+                    CANAL DE DISTRIBUCIÓN · {viewData.periodLabel.toUpperCase()}
+                  </span>
+                  <h2 className="text-xl sm:text-2xl font-bold text-white tracking-tight mt-0.5">
+                    Embudo de Socios y Comunidades Activas
+                  </h2>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Conteo cuantitativo de socios, franquiciados UpConta y red de distribuidores Connect
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {isManuallyModified && (
+                    <button
+                      onClick={handleResetCommunities}
+                      className="text-xs px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-400 border border-amber-500/30 flex items-center gap-1.5 transition-colors font-medium"
+                      title="Restablecer a valores automáticos del Excel"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      <span>Restablecer Automático</span>
+                    </button>
+                  )}
+                  <button
+                    onClick={() => {
+                      setTempUpconta(upcontaMembers);
+                      setTempFranquicia(franquiciaMembers);
+                      setTempFormacion(formacionMembers);
+                      setIsEditingCommunities(true);
+                    }}
+                    className="text-xs px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold flex items-center gap-1.5 shadow-md shadow-emerald-600/30 transition-colors"
+                  >
+                    <Edit3 className="w-3.5 h-3.5" />
+                    <span>Modificar Miembros</span>
+                  </button>
+                </div>
               </div>
 
               {/* 3 Compact Funnel Columns */}
@@ -981,9 +1564,26 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard,
                       Up
                     </div>
                     <h3 className="text-sm font-bold text-white">UpConta Socios</h3>
-                    <div className="text-3xl font-black text-sky-400 tabular-nums my-1">
-                      {viewData.sociosSummary.upconnect.count}
-                    </div>
+                    {isEditMode ? (
+                      <div className="my-1">
+                        <label className="text-[10px] text-sky-300 font-medium block">Cantidad Socios:</label>
+                        <input
+                          type="number"
+                          min="0"
+                          value={upcontaMembers}
+                          onChange={(e) => {
+                            const val = parseInt(e.target.value, 10) || 0;
+                            setCustomCommunities((prev) => ({ ...prev, upcontaSocios: val }));
+                            setEditValues((prev) => ({ ...prev, r2_upcontaSocios: val, upcontaSocios: val }));
+                          }}
+                          className="w-full text-2xl font-black text-sky-400 bg-slate-950 border border-sky-500 rounded px-2 py-0.5 tabular-nums focus:outline-none text-center"
+                        />
+                      </div>
+                    ) : (
+                      <div className="text-3xl font-black text-sky-400 tabular-nums my-1">
+                        {upcontaMembers}
+                      </div>
+                    )}
                     <div className="text-[11px] font-semibold text-slate-400 mb-1">Socios Distribuidor Upconnect</div>
                   </div>
                   <p className="text-[11px] text-slate-400 border-t border-slate-800 pt-2">
@@ -998,10 +1598,27 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard,
                       👑
                     </div>
                     <h3 className="text-sm font-bold text-white">Franquicia Contadores VIP</h3>
-                    <div className="text-3xl font-black text-white tabular-nums my-1">
-                      {viewData.sociosSummary.connectors.count}
-                    </div>
-                    <div className="text-[11px] font-semibold text-purple-400 mb-1">Socios Distribuidor Connect Aliados</div>
+                    {isEditMode ? (
+                      <div className="my-1">
+                        <label className="text-[10px] text-purple-300 font-medium block">Cantidad Franquiciados:</label>
+                        <input
+                          type="number"
+                          min="0"
+                          value={franquiciaMembers}
+                          onChange={(e) => {
+                            const val = parseInt(e.target.value, 10) || 0;
+                            setCustomCommunities((prev) => ({ ...prev, franquiciaVIP: val }));
+                            setEditValues((prev) => ({ ...prev, r2_franquiciaVIP: val, franquiciaVIP: val }));
+                          }}
+                          className="w-full text-2xl font-black text-white bg-slate-950 border border-emerald-500 rounded px-2 py-0.5 tabular-nums focus:outline-none text-center"
+                        />
+                      </div>
+                    ) : (
+                      <div className="text-3xl font-black text-white tabular-nums my-1">
+                        {franquiciaMembers}
+                      </div>
+                    )}
+                    <div className="text-[11px] font-semibold text-purple-400 mb-1">Socios Distribuidor Connect</div>
                   </div>
                   <p className="text-[11px] text-slate-300 border-t border-slate-800 pt-2">
                     Contadores activos y red externa de distribución Connect.
@@ -1015,9 +1632,26 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard,
                       🎓
                     </div>
                     <h3 className="text-sm font-bold text-white">Capacitación Franquicia</h3>
-                    <div className="text-3xl font-black text-emerald-400 tabular-nums my-1">
-                      {Math.max(1, Math.round(viewData.sociosSummary.totalSociosCount * 0.25)) || 51}
-                    </div>
+                    {isEditMode ? (
+                      <div className="my-1">
+                        <label className="text-[10px] text-emerald-300 font-medium block">Miembros en Formación:</label>
+                        <input
+                          type="number"
+                          min="0"
+                          value={formacionMembers}
+                          onChange={(e) => {
+                            const val = parseInt(e.target.value, 10) || 0;
+                            setCustomCommunities((prev) => ({ ...prev, formacionComercial: val }));
+                            setEditValues((prev) => ({ ...prev, r2_formacionComercial: val, formacionComercial: val }));
+                          }}
+                          className="w-full text-2xl font-black text-emerald-400 bg-slate-950 border border-emerald-500 rounded px-2 py-0.5 tabular-nums focus:outline-none text-center"
+                        />
+                      </div>
+                    ) : (
+                      <div className="text-3xl font-black text-emerald-400 tabular-nums my-1">
+                        {formacionMembers}
+                      </div>
+                    )}
                     <div className="text-[11px] font-semibold text-slate-400 mb-1">Miembros en Inducción</div>
                   </div>
                   <p className="text-[11px] text-slate-400 border-t border-slate-800 pt-2">
@@ -1029,7 +1663,7 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard,
               {/* TABLA ADICIONAL: Cantidad de Socios Distribuidor Upconnect vs Distribuidor Connect */}
               <div className="my-1">
                 <SociosChannelTable
-                  summary={viewData.sociosSummary}
+                  summary={communitiesTableSummary}
                   variant="slide"
                   title="Distribución y Cantidad de Socios por Canal: Distribuidor Upconnect vs Distribuidor Connect"
                 />
@@ -1038,7 +1672,10 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard,
               {/* Bottom callout */}
               <div className="p-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-xs text-slate-300 flex items-center justify-between">
                 <div>
-                  <strong className="text-emerald-400">Total Cartera Auditada:</strong> {viewData.sociosSummary.totalSociosCount} socios registrados ({viewData.sociosSummary.upconnect.count} Distribuidor Upconnect / {viewData.sociosSummary.connectors.count} Distribuidor Connect) con {viewData.sociosSummary.totalOperationsCount} ventas conciliadas por ${viewData.sociosSummary.totalSales.toLocaleString('en-US', { minimumFractionDigits: 2 })} USD.
+                  <strong className="text-emerald-400">Total Cartera Auditada:</strong> {communitiesTableSummary.totalSociosCount} socios registrados ({communitiesTableSummary.upconnect.count} Distribuidor Upconnect / {communitiesTableSummary.connectors.count} Distribuidor Connect) con {communitiesTableSummary.totalOperationsCount} ventas conciliadas por ${communitiesTableSummary.totalSales.toLocaleString('en-US', { minimumFractionDigits: 2 })} USD.
+                  {isManuallyModified && (
+                    <span className="ml-2 text-amber-400 font-medium text-[11px]">(Valores personalizados manualmente)</span>
+                  )}
                 </div>
                 <span className="text-emerald-400 font-bold">100% Conciliado con Base Excel</span>
               </div>
@@ -1046,52 +1683,155 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard,
           )}
 
           {/* SLIDE 8: Siguiente Fase: Cruce Comercial */}
-          {currentSlideDef.id === 'cross' && (
-            <div className="h-full flex flex-col justify-center items-center text-center p-8 sm:p-16 relative bg-gradient-to-br from-[#0c1322] via-[#080d19] to-[#040812]">
-              <div className="z-10 max-w-2xl space-y-6">
-                <div className="w-12 h-12 rounded-2xl bg-emerald-500 text-white flex items-center justify-center mx-auto shadow-lg shadow-emerald-500/30">
-                  <Activity className="w-6 h-6" />
-                </div>
+          {currentSlideDef.id === 'cross' && (() => {
+            const activeCross = viewData.commercialCrossReport2 || dataset.commercialCross;
+            return (
+              <div className="h-full flex flex-col justify-center items-center text-center p-8 sm:p-16 relative bg-gradient-to-br from-[#0c1322] via-[#080d19] to-[#040812]">
+                <div className="z-10 max-w-2xl space-y-6">
+                  <div className="w-12 h-12 rounded-2xl bg-emerald-500 text-white flex items-center justify-center mx-auto shadow-lg shadow-emerald-500/30">
+                    <Activity className="w-6 h-6" />
+                  </div>
 
-                <div className="text-xs font-bold uppercase tracking-wider text-emerald-400">
-                  SIGUIENTE FASE: CRUCE COMERCIAL
-                </div>
+                  <div className="text-xs font-bold uppercase tracking-wider text-emerald-400">
+                    SIGUIENTE FASE: CRUCE COMERCIAL
+                  </div>
 
-                <h2 className="text-3xl sm:text-4xl font-black text-white tracking-tight">
-                  RESUMEN DE VENTAS UPCONTA Y SOCIOS
-                </h2>
+                  <h2 className="text-3xl sm:text-4xl font-black text-white tracking-tight">
+                    RESUMEN DE VENTAS UPCONTA Y SOCIOS
+                  </h2>
 
-                <div className="space-y-2 py-4 text-base font-semibold text-slate-300">
-                  <div>VENTAS EQUIPO COMERCIAL: <strong className="text-white">${dataset.commercialCross?.commercialTeamSales ? dataset.commercialCross.commercialTeamSales.toLocaleString('en-US', { minimumFractionDigits: 2 }) : '0.00'}</strong></div>
-                  <div>VENTAS ORGÁNICAS: <strong className="text-white">${dataset.commercialCross?.organicSales ? dataset.commercialCross.organicSales.toLocaleString('en-US', { minimumFractionDigits: 2 }) : '0.00'}</strong></div>
-                  <div>VENTAS SOCIOS: <strong className="text-emerald-400">${(dataset.commercialCross?.partnersSales || netSales).toLocaleString('en-US', { minimumFractionDigits: 2 })}</strong></div>
-                </div>
+                  <div className="space-y-2 py-4 text-base font-semibold text-slate-300">
+                    <div>VENTAS EQUIPO COMERCIAL: <strong className="text-white">${activeCross?.commercialTeamSales ? activeCross.commercialTeamSales.toLocaleString('en-US', { minimumFractionDigits: 2 }) : '0.00'}</strong></div>
+                    <div>VENTAS ORGÁNICAS: <strong className="text-white">${activeCross?.organicSales ? activeCross.organicSales.toLocaleString('en-US', { minimumFractionDigits: 2 }) : '0.00'}</strong></div>
+                    <div>VENTAS SOCIOS: <strong className="text-emerald-400">${(activeCross?.partnersSales || netSales).toLocaleString('en-US', { minimumFractionDigits: 2 })}</strong></div>
+                  </div>
 
-                <div className="grid grid-cols-2 gap-8 pt-6 border-t border-slate-800/80 max-w-lg mx-auto">
-                  <div className="text-left">
-                    <div className="text-[11px] font-bold text-slate-500 uppercase">{dataset.commercialCross?.channel1Name || 'CANAL 1 AUDITADO'}</div>
-                    <div className="text-sm sm:text-base font-bold text-sky-400 mt-1">
-                      Socios UpConnect (${(dataset.commercialCross?.channel1Amount || netSales).toLocaleString('en-US', { minimumFractionDigits: 2 })})
+                  <div className="grid grid-cols-2 gap-8 pt-6 border-t border-slate-800/80 max-w-lg mx-auto">
+                    <div className="text-left">
+                      <div className="text-[11px] font-bold text-slate-500 uppercase">{activeCross?.channel1Name || 'CANAL 1 AUDITADO'}</div>
+                      <div className="text-sm sm:text-base font-bold text-sky-400 mt-1">
+                        Socios UpConnect (${(activeCross?.channel1Amount || netSales).toLocaleString('en-US', { minimumFractionDigits: 2 })})
+                      </div>
+                    </div>
+                    <div className="text-left">
+                      <div className="text-[11px] font-bold text-slate-500 uppercase">{activeCross?.channel2Name || 'CANAL 2 PENDIENTE'}</div>
+                      <div className="text-sm sm:text-base font-bold text-slate-400 mt-1">
+                        {activeCross?.channel2Status || 'Asesores Directos & Marketing'}
+                      </div>
                     </div>
                   </div>
-                  <div className="text-left">
-                    <div className="text-[11px] font-bold text-slate-500 uppercase">{dataset.commercialCross?.channel2Name || 'CANAL 2 PENDIENTE'}</div>
-                    <div className="text-sm sm:text-base font-bold text-slate-400 mt-1">
-                      {dataset.commercialCross?.channel2Status || 'Asesores Directos & Marketing'}
-                    </div>
-                  </div>
+                </div>
+
+                <div className="absolute bottom-4 left-8 right-8 flex justify-between items-center text-[11px] text-slate-500 border-t border-slate-800/60 pt-3">
+                  <span>Próximo hito: Consolidación omnicanal y liquidación automática</span>
+                  <span>Pág. 08</span>
                 </div>
               </div>
-
-              <div className="absolute bottom-4 left-8 right-8 flex justify-between items-center text-[11px] text-slate-500 border-t border-slate-800/60 pt-3">
-                <span>Próximo hito: Consolidación omnicanal y liquidación automática</span>
-                <span>Pág. 08</span>
-              </div>
-            </div>
-          )}
+            );
+          })()}
 
         </div>
       </div>
+
+      {/* MODAL: Modificar Miembros de Comunidades / Embudo */}
+      {isEditingCommunities && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="w-full max-w-md bg-slate-950 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-5">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                <Users className="w-5 h-5 text-emerald-400" />
+                <h3 className="text-base font-bold text-white">Modificar Conteo de Miembros</h3>
+              </div>
+              <button
+                onClick={() => setIsEditingCommunities(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-400">
+              Ajusta manualmente los miembros del embudo. Los cambios afectarán de inmediato la cantidad y porcentajes de la tabla de distribución por canal.
+            </p>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  UpConta Socios (Distribuidor Upconnect)
+                </label>
+                <div className="text-[11px] text-slate-500 mb-1.5">
+                  Socios calculados en Excel: <strong className="text-sky-400">{autoUpSocios}</strong>
+                </div>
+                <input
+                  type="number"
+                  min="0"
+                  value={tempUpconta}
+                  onChange={(e) => setTempUpconta(parseInt(e.target.value, 10) || 0)}
+                  className="w-full px-3 py-2 text-sm bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  Franquicia Contadores VIP (Distribuidor Connect)
+                </label>
+                <div className="text-[11px] text-slate-500 mb-1.5">
+                  Socios calculados en Excel: <strong className="text-purple-400">{autoCoSocios}</strong>
+                </div>
+                <input
+                  type="number"
+                  min="0"
+                  value={tempFranquicia}
+                  onChange={(e) => setTempFranquicia(parseInt(e.target.value, 10) || 0)}
+                  className="w-full px-3 py-2 text-sm bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  Capacitación Franquicia (Formación Comercial)
+                </label>
+                <div className="text-[11px] text-slate-500 mb-1.5">
+                  Estimado automático: <strong className="text-emerald-400">{autoFormacion}</strong>
+                </div>
+                <input
+                  type="number"
+                  min="0"
+                  value={tempFormacion}
+                  onChange={(e) => setTempFormacion(parseInt(e.target.value, 10) || 0)}
+                  className="w-full px-3 py-2 text-sm bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between pt-3 border-t border-slate-800 gap-2">
+              <button
+                onClick={handleResetCommunities}
+                className="text-xs px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors flex items-center gap-1.5 font-medium"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Restablecer</span>
+              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setIsEditingCommunities(false)}
+                  className="text-xs px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={() => handleSaveCommunitiesModal(tempUpconta, tempFranquicia, tempFormacion)}
+                  className="text-xs px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold transition-colors shadow-lg shadow-emerald-600/30 flex items-center gap-1.5"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                  <span>Guardar Cambios</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* MODAL: Mover y Reorganizar Diapositivas */}
       <ReorderSlidesModal

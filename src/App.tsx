@@ -10,6 +10,7 @@ import { Navigation, NavView } from './components/Navigation';
 import { DashboardView } from './components/DashboardView';
 import { PresentationType1 } from './components/PresentationType1';
 import { PresentationType2 } from './components/PresentationType2';
+import { UnifiedOnlinePresentation } from './components/UnifiedOnlinePresentation';
 import { ExcelUploadModal, UploadTargetType } from './components/ExcelUploadModal';
 import { 
   deriveMonthlyMetricsFromTransactions, 
@@ -17,7 +18,9 @@ import {
   deriveWeeklyBreakdownFromTransactions,
   deriveSolutionCategoriesFromTransactions,
   deriveCommercialCrossFromTransactions,
-  formatSpanishDateCutoff
+  deriveSellersFromFirmaTransactions,
+  formatSpanishDateCutoff,
+  MONTH_NAMES_ES
 } from './utils/reportFilters';
 import { CheckCircle2, AlertCircle, Info, X } from 'lucide-react';
 import { exportCombinedPresentationsToPPTX } from './services/pptxExportService';
@@ -35,17 +38,24 @@ export default function App() {
     onAction?: () => void;
   } | null>(null);
 
-  // Initialize dataset from localStorage or fallback to audited initialDataset
+  // Initialize dataset from localStorage or fallback to audited initialDataset with current month filter
   const [dataset, setDataset] = useState<GlobalDataset>(() => {
+    const currentActualMonth = MONTH_NAMES_ES[new Date().getMonth()] || 'OCTUBRE';
     try {
       const saved = localStorage.getItem(DATASET_STORAGE_KEY);
       if (saved) {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        // En el filtro de control de periodo del reporte, que siempre esté con el mes actual
+        parsed.reportFilter = { type: 'month', month: currentActualMonth };
+        return parsed;
       }
     } catch (e) {
       console.error('Error loading dataset from local storage', e);
     }
-    return initialDataset;
+    return {
+      ...initialDataset,
+      reportFilter: { type: 'month', month: currentActualMonth },
+    };
   });
 
   // Save dataset to localStorage whenever it changes
@@ -128,26 +138,28 @@ export default function App() {
       }
 
       updatedDataset.transactions = finalTrx;
+      updatedDataset.firmaTransactions = finalTrx;
       updatedDataset.monthlyMetrics = deriveMonthlyMetricsFromTransactions(finalTrx);
       updatedDataset.portfolioDurations = derivePortfolioDurationsFromTransactions(finalTrx);
       const weekly = deriveWeeklyBreakdownFromTransactions(finalTrx);
       updatedDataset.weeklyBreakdownType1 = weekly.type1;
-      updatedDataset.solutionCategories = deriveSolutionCategoriesFromTransactions(finalTrx);
-      updatedDataset.commercialCross = deriveCommercialCrossFromTransactions(finalTrx);
+      updatedDataset.firmaSocios = deriveSellersFromFirmaTransactions(finalTrx);
 
-      // NO se modifica dataset.socios: el Reporte 2 permanece intacto con su archivo de socios
-
+      // Determinar fecha de corte exclusiva de Reporte 1 (Firmas)
+      let cutoffFirma = 'Sin corte definido';
       if (result.detectedCutoffDate) {
-        updatedDataset.cutoffDate = result.detectedCutoffDate;
+        cutoffFirma = result.detectedCutoffDate;
       } else {
         const validDates = finalTrx
           .map((t) => new Date(t.date))
           .filter((d) => !isNaN(d.getTime()))
           .sort((a, b) => b.getTime() - a.getTime());
         if (validDates.length > 0) {
-          updatedDataset.cutoffDate = formatSpanishDateCutoff(validDates[0]);
+          cutoffFirma = formatSpanishDateCutoff(validDates[0]);
         }
       }
+      updatedDataset.cutoffDateFirma = cutoffFirma;
+      updatedDataset.cutoffDate = cutoffFirma;
 
       if (result.detectedMonth) {
         updatedDataset.reportFilter = {
@@ -155,6 +167,11 @@ export default function App() {
           month: result.detectedMonth,
         };
       }
+
+      // CRITICAL: NO se modifican variables del Reporte 2:
+      // dataset.socios, dataset.sistemasTransactions, dataset.sistemasMonthlyMetrics,
+      // dataset.weeklyBreakdownType2, dataset.solutionCategories, dataset.commercialCross,
+      // dataset.cutoffDateSocios quedan 100% INTACTOS.
     } else if (result.type === 'socios') {
       // REPORTE 2: Se actualiza EXCLUSIVAMENTE con el archivo de socios
       let incomingSocios = result.socios || [];
@@ -195,27 +212,35 @@ export default function App() {
         }
       }
 
-      // Si el archivo trajo liquidaciones semanales para el Reporte 2
+      // Si el archivo trajo transacciones de socios (sistemas/planes)
       if (result.transactions && result.transactions.length > 0) {
+        updatedDataset.sistemasTransactions = result.transactions;
+        updatedDataset.sistemasMonthlyMetrics = deriveMonthlyMetricsFromTransactions(result.transactions);
         const weekly = deriveWeeklyBreakdownFromTransactions(result.transactions, result.detectedMonth);
         if (weekly.type2 && weekly.type2.length > 0) {
           updatedDataset.weeklyBreakdownType2 = weekly.type2;
         }
+        updatedDataset.solutionCategories = deriveSolutionCategoriesFromTransactions(result.transactions);
+        updatedDataset.commercialCross = deriveCommercialCrossFromTransactions(result.transactions);
       }
 
-      // NO se modifican transactions ni monthlyMetrics de Reporte 1: Reporte 1 permanece intacto
-
+      // Determinar fecha de corte exclusiva de Reporte 2 (Socios)
       if (result.detectedCutoffDate) {
-        updatedDataset.cutoffDate = result.detectedCutoffDate;
+        updatedDataset.cutoffDateSocios = result.detectedCutoffDate;
       }
 
-      // Automatically focus on the identified month!
+      // Automatically focus on the identified month if present
       if (result.detectedMonth) {
         updatedDataset.reportFilter = {
           type: 'month',
           month: result.detectedMonth,
         };
       }
+
+      // CRITICAL: NO se modifican variables del Reporte 1:
+      // dataset.transactions, dataset.monthlyMetrics, dataset.portfolioDurations,
+      // dataset.weeklyBreakdownType1, dataset.firmaTransactions, dataset.firmaSocios,
+      // dataset.cutoffDateFirma quedan 100% INTACTOS.
 
       showToast(
         'success',
@@ -236,7 +261,7 @@ export default function App() {
       ...initialDataset,
       updatedAt: new Date().toISOString(),
       cutoffDate: 'Sin corte definido',
-      reportFilter: { type: 'all' },
+      reportFilter: { type: 'month', month: MONTH_NAMES_ES[new Date().getMonth()] || 'OCTUBRE' },
       monthlyMetrics: [],
       socios: [],
       transactions: [],
@@ -280,7 +305,7 @@ export default function App() {
       if (s.name.toLowerCase().trim() === socioName.toLowerCase().trim()) {
         const currentCh = s.channel || (s.role?.toLowerCase().includes('connect') ? 'Connectors' : 'UpConnect');
         const newChannel: 'UpConnect' | 'Connectors' = currentCh === 'UpConnect' ? 'Connectors' : 'UpConnect';
-        const newRole = newChannel === 'Connectors' ? 'Distribuidor Connect' : 'UpConnect Directo';
+        const newRole = newChannel === 'Connectors' ? 'Distribuidor Connect' : 'Distribuidor Upconnect';
         return { ...s, channel: newChannel, role: newRole };
       }
       return s;
@@ -356,6 +381,7 @@ export default function App() {
             onUpdateFilter={handleUpdateFilter}
             onAddTransaction={handleAddManualTransaction}
             onToggleSocioChannel={handleToggleSocioChannel}
+            onOpenOnlineReport={() => setCurrentView('online_report')}
           />
         )}
 
@@ -364,11 +390,21 @@ export default function App() {
             dataset={dataset}
             onBackToDashboard={() => setCurrentView('dashboard')}
             onUpdateDataset={handleUpdateDataset}
+            onOpenOnlineReport={() => setCurrentView('online_report')}
           />
         )}
 
         {currentView === 'presentation2' && (
           <PresentationType2 
+            dataset={dataset}
+            onBackToDashboard={() => setCurrentView('dashboard')}
+            onUpdateDataset={handleUpdateDataset}
+            onOpenOnlineReport={() => setCurrentView('online_report')}
+          />
+        )}
+
+        {currentView === 'online_report' && (
+          <UnifiedOnlinePresentation
             dataset={dataset}
             onBackToDashboard={() => setCurrentView('dashboard')}
             onUpdateDataset={handleUpdateDataset}

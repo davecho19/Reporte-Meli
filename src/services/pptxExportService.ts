@@ -368,9 +368,9 @@ export const exportCombinedPresentationsToPPTX = async (
   });
 
   // P1-S7: Comunidades y Franquiciados
-  const commUp = customCommunities?.upcontaSocios ?? Number(overrides['upcontaSocios'] || 52);
-  const commVip = customCommunities?.franquiciaVIP ?? Number(overrides['franquiciaVIP'] || 31);
-  const commForm = customCommunities?.formacionComercial ?? Number(overrides['formacionComercial'] || 17);
+  const commUp = customCommunities?.upcontaSocios ?? Number(overrides['upcontaSocios'] || 118);
+  const commVip = customCommunities?.franquiciaVIP ?? Number(overrides['franquiciaVIP'] || 129);
+  const commForm = customCommunities?.formacionComercial ?? Number(overrides['formacionComercial'] || 51);
 
   const slideComm = pptx.addSlide();
   slideComm.background = { color: BG_DARK };
@@ -378,26 +378,26 @@ export const exportCombinedPresentationsToPPTX = async (
   slideComm.addText('Desglose de Comunidades y Red de Franquiciados', { x: 0.8, y: 0.8, w: 11.0, h: 0.6, fontSize: 20, bold: true, color: TEXT_WHITE });
   slideComm.addShape(pptx.ShapeType.roundRect, { x: 0.8, y: 1.8, w: 3.6, h: 4.5, fill: { color: CARD_BG }, line: { color: ACCENT_BLUE, width: 1.5 }, rectRadius: 0.15 });
   slideComm.addText('UPCONTA SOCIOS', { x: 1.0, y: 2.1, w: 3.2, h: 0.4, fontSize: 13, bold: true, color: ACCENT_SKY });
-  slideComm.addText(`${commUp}%`, { x: 1.0, y: 2.6, w: 3.2, h: 0.6, fontSize: 28, bold: true, color: TEXT_WHITE });
-  slideComm.addText('• Base principal de despachos contables y firmas auditoras asociadas.', { x: 1.0, y: 3.4, w: 3.2, h: 1.0, fontSize: 11, color: TEXT_MUTED });
+  slideComm.addText(`${commUp} Socios`, { x: 1.0, y: 2.6, w: 3.2, h: 0.6, fontSize: 24, bold: true, color: TEXT_WHITE });
+  slideComm.addText('• Base principal de despachos contables y firmas auditoras asociadas a UpConnect.', { x: 1.0, y: 3.4, w: 3.2, h: 1.0, fontSize: 11, color: TEXT_MUTED });
 
   slideComm.addShape(pptx.ShapeType.roundRect, { x: 4.8, y: 1.8, w: 3.6, h: 4.5, fill: { color: CARD_BG }, line: { color: ACCENT_AMBER, width: 1.5 }, rectRadius: 0.15 });
   slideComm.addText('FRANQUICIA VIP', { x: 5.0, y: 2.1, w: 3.2, h: 0.4, fontSize: 13, bold: true, color: ACCENT_AMBER });
-  slideComm.addText(`${commVip}%`, { x: 5.0, y: 2.6, w: 3.2, h: 0.6, fontSize: 28, bold: true, color: TEXT_WHITE });
-  slideComm.addText('• Distribuidores de alto desempeño con licencias de reventa exclusivas.', { x: 5.0, y: 3.4, w: 3.2, h: 1.0, fontSize: 11, color: TEXT_MUTED });
+  slideComm.addText(`${commVip} Franquiciados`, { x: 5.0, y: 2.6, w: 3.2, h: 0.6, fontSize: 24, bold: true, color: TEXT_WHITE });
+  slideComm.addText('• Distribuidores de alto desempeño y franquiciados contables red Distribuidor Connect.', { x: 5.0, y: 3.4, w: 3.2, h: 1.0, fontSize: 11, color: TEXT_MUTED });
 
   slideComm.addShape(pptx.ShapeType.roundRect, { x: 8.8, y: 1.8, w: 3.6, h: 4.5, fill: { color: CARD_BG }, line: { color: ACCENT_EMERALD, width: 1.5 }, rectRadius: 0.15 });
   slideComm.addText('FORMACIÓN COMERCIAL', { x: 9.0, y: 2.1, w: 3.2, h: 0.4, fontSize: 13, bold: true, color: ACCENT_EMERALD });
-  slideComm.addText(`${commForm}%`, { x: 9.0, y: 2.6, w: 3.2, h: 0.6, fontSize: 28, bold: true, color: TEXT_WHITE });
-  slideComm.addText('• Canales emergentes en capacitación y certificación continua.', { x: 9.0, y: 3.4, w: 3.2, h: 1.0, fontSize: 11, color: TEXT_MUTED });
+  slideComm.addText(`${commForm} Miembros`, { x: 9.0, y: 2.6, w: 3.2, h: 0.6, fontSize: 24, bold: true, color: TEXT_WHITE });
+  slideComm.addText('• Canales emergentes en capacitación y certificación técnica y comercial.', { x: 9.0, y: 3.4, w: 3.2, h: 1.0, fontSize: 11, color: TEXT_MUTED });
 
   // P1-S8: Tabla Detallada de Socios
   const slideSocios1 = pptx.addSlide();
   slideSocios1.background = { color: BG_DARK };
   slideSocios1.addText('DESEMPEÑO Y CARTERA COMERCIAL · REPORTE 1', { x: 0.8, y: 0.5, w: 6.0, h: 0.3, fontSize: 10, bold: true, color: ACCENT_SKY });
-  slideSocios1.addText('Rendimiento y Ranking de Socios Comerciales', { x: 0.8, y: 0.8, w: 11.0, h: 0.6, fontSize: 20, bold: true, color: TEXT_WHITE });
+  slideSocios1.addText('Rendimiento y Ranking de Vendedores de Firmas', { x: 0.8, y: 0.8, w: 11.0, h: 0.6, fontSize: 20, bold: true, color: TEXT_WHITE });
 
-  const top10Socios1 = (viewData.socios || []).slice(0, 10);
+  const top10Socios1 = (viewData.firmaSocios && viewData.firmaSocios.length > 0 ? viewData.firmaSocios : (viewData.socios || [])).slice(0, 10);
   const socioHeaders1: pptxgen.TableCell[] = [
     { text: '#', options: { bold: true, color: TEXT_WHITE, fill: { color: '1E293B' }, align: 'center' as const } },
     { text: 'Nombre del Socio', options: { bold: true, color: TEXT_WHITE, fill: { color: '1E293B' } } },
@@ -667,6 +667,9 @@ export const exportPresentationType1ToPPTX = async (
 /**
  * Exports the complete unified presentation for Reporte 2 or from anywhere in the app.
  */
-export const exportPresentationType2ToPPTX = async (dataset: GlobalDataset) => {
-  return exportCombinedPresentationsToPPTX(dataset);
+export const exportPresentationType2ToPPTX = async (
+  dataset: GlobalDataset,
+  customCommunities?: { upcontaSocios?: number; franquiciaVIP?: number; formacionComercial?: number }
+) => {
+  return exportCombinedPresentationsToPPTX(dataset, customCommunities);
 };

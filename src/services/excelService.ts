@@ -840,7 +840,7 @@ export const parseExcelFile = async (
         const valCanal = String(row[canalCol]).toLowerCase();
         if (valCanal.includes('up') || valCanal.includes('direct')) {
           socioChannel = 'UpConnect';
-          socioRole = 'UpConnect Directo';
+          socioRole = 'Distribuidor Upconnect';
         } else if (valCanal.includes('connect') || valCanal.includes('distribuidor') || valCanal.includes('aliado')) {
           socioChannel = 'Connectors';
           socioRole = 'Distribuidor Connect';
@@ -860,7 +860,7 @@ export const parseExcelFile = async (
       const sLower = socioName.toLowerCase();
       if (sLower.includes('upconnect') || sLower.includes('directo')) {
         socioChannel = 'UpConnect';
-        socioRole = 'UpConnect Directo';
+        socioRole = 'Distribuidor Upconnect';
       } else if (sLower.includes('connectors') || sLower.includes('distribuidor')) {
         socioChannel = 'Connectors';
         socioRole = 'Distribuidor Connect';
@@ -1202,7 +1202,7 @@ export const parseExcelFile = async (
         return;
       }
       if (!socioName) {
-        socioName = 'UpConnect Directo';
+        socioName = 'Distribuidor Upconnect';
       }
 
       // 2. Rol y Canal - Prioridad Columna CB (Excel Column 80, 0-indexed 79)
@@ -2148,7 +2148,7 @@ export const downloadTemplateFirmas = (): void => {
       'Duración': 'Un año',
       'Valor': 29.99,
       'Vendedor': 'Gabriela González',
-      'Rol': 'UpConnect Directo',
+      'Rol': 'Distribuidor Upconnect',
     },
   ];
 
@@ -2312,7 +2312,7 @@ export const downloadTemplateExcel = (): void => {
       'Certificado Estado': 'EMITIDO',
       'Certificado Duración': '1 Año',
       'Valor': 29.99,
-      'Rol': 'UpConnect Directo',
+      'Rol': 'Distribuidor Upconnect',
       'Socio': 'Gabriela González',
       'Categoría': 'ERP Contables y Módulos',
     },
