@@ -10,18 +10,20 @@ import {
   FileSignature,
   Users2,
   Table,
-  RefreshCw
+  RefreshCw,
+  UserPlus
 } from 'lucide-react';
 import { 
   parseExcelFile, 
   ParsedExcelResult, 
   downloadTemplateFirmas, 
   downloadTemplateSocios,
-  downloadTemplateExcel 
+  downloadTemplateExcel,
+  downloadVendorTemplateExcel
 } from '../services/excelService';
-import { TransactionRecord, MonthlyMetric, SocioRecord } from '../types';
+import { TransactionRecord, MonthlyMetric, SocioRecord, VendorCreationRecord, VendorMonthlyCreation } from '../types';
 
-export type UploadTargetType = 'firma' | 'socios' | 'auto';
+export type UploadTargetType = 'firma' | 'socios' | 'vendedores' | 'auto';
 
 interface Props {
   isOpen: boolean;
@@ -29,10 +31,12 @@ interface Props {
   targetType: UploadTargetType;
   onChangeTargetType?: (type: UploadTargetType) => void;
   onApplyData: (result: {
-    type: 'transactions' | 'monthly_summary' | 'socios';
+    type: 'transactions' | 'monthly_summary' | 'socios' | 'vendedores';
     transactions?: TransactionRecord[];
     monthlyMetrics?: MonthlyMetric[];
     socios?: SocioRecord[];
+    vendorCreations?: VendorCreationRecord[];
+    vendorMonthlyCreations?: VendorMonthlyCreation[];
     detectedMonth?: string;
     detectedCutoffDate?: string;
     dateRangeStr?: string;
@@ -108,7 +112,14 @@ export const ExcelUploadModal: React.FC<Props> = ({
   const handleConfirmImport = () => {
     if (!parsedResult) return;
 
-    if (activeType === 'socios' || (activeType === 'auto' && parsedResult.recognizedType === 'socios' && parsedResult.socios)) {
+    if (activeType === 'vendedores' || (activeType === 'auto' && parsedResult.recognizedType === 'vendedores')) {
+      onApplyData({
+        type: 'vendedores',
+        vendorCreations: parsedResult.vendorCreations,
+        vendorMonthlyCreations: parsedResult.vendorMonthlyCreations,
+        mode: importMode,
+      });
+    } else if (activeType === 'socios' || (activeType === 'auto' && parsedResult.recognizedType === 'socios' && parsedResult.socios)) {
       onApplyData({
         type: 'socios',
         socios: parsedResult.socios,
@@ -152,18 +163,32 @@ export const ExcelUploadModal: React.FC<Props> = ({
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-[#09101d]">
           <div className="flex items-center gap-3">
             <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold ${
-              activeType === 'firma'
+              activeType === 'vendedores'
+                ? 'bg-purple-500/20 text-purple-400'
+                : activeType === 'firma'
                 ? 'bg-blue-500/20 text-sky-400'
                 : 'bg-emerald-500/20 text-emerald-400'
             }`}>
-              {activeType === 'firma' ? <FileSignature className="w-5 h-5" /> : <Users2 className="w-5 h-5" />}
+              {activeType === 'vendedores' ? (
+                <UserPlus className="w-5 h-5" />
+              ) : activeType === 'firma' ? (
+                <FileSignature className="w-5 h-5" />
+              ) : (
+                <Users2 className="w-5 h-5" />
+              )}
             </div>
             <div>
               <h2 className="text-base font-bold text-white">
-                {activeType === 'firma' ? 'Carga Archivo Firma (Afecta únicamente al Reporte 1)' : 'Carga Archivo Socios (Afecta únicamente al Reporte 2)'}
+                {activeType === 'vendedores'
+                  ? 'Cargar Vendedores (Estadística de Socios Creados)'
+                  : activeType === 'firma'
+                  ? 'Carga Archivo Firma (Afecta únicamente al Reporte 1)'
+                  : 'Carga Archivo Socios (Afecta únicamente al Reporte 2)'}
               </h2>
               <p className="text-xs text-slate-400">
-                {activeType === 'firma' 
+                {activeType === 'vendedores'
+                  ? 'Archivo de 2 columnas: Número y Fecha de Creación para graficar socios creados mes a mes'
+                  : activeType === 'firma'
                   ? 'Alimenta las emisiones y cálculos de canales del Reporte 1 (no afecta la cartera del Reporte 2)'
                   : 'Alimenta la nómina de socios, auditoría y Pareto del Reporte 2 (no altera las ventas del Reporte 1)'}
               </p>
@@ -178,12 +203,12 @@ export const ExcelUploadModal: React.FC<Props> = ({
           </button>
         </div>
 
-        {/* 2-Option Tabs: Carga Archivo Firma vs Carga Archivo Socios */}
-        <div className="flex border-b border-slate-800 bg-slate-900/60 px-6 pt-3 gap-2">
+        {/* 3-Option Tabs: Firma, Socios, Vendedores */}
+        <div className="flex border-b border-slate-800 bg-slate-900/60 px-6 pt-3 gap-2 overflow-x-auto">
           <button
             type="button"
             onClick={() => switchTab('firma')}
-            className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold rounded-t-xl transition-all border-t border-x ${
+            className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold rounded-t-xl transition-all border-t border-x whitespace-nowrap ${
               activeType === 'firma'
                 ? 'bg-[#0e1626] text-sky-400 border-slate-700 border-b-transparent shadow-md'
                 : 'bg-transparent text-slate-400 border-transparent hover:text-white'
@@ -196,7 +221,7 @@ export const ExcelUploadModal: React.FC<Props> = ({
           <button
             type="button"
             onClick={() => switchTab('socios')}
-            className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold rounded-t-xl transition-all border-t border-x ${
+            className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold rounded-t-xl transition-all border-t border-x whitespace-nowrap ${
               activeType === 'socios'
                 ? 'bg-[#0e1626] text-emerald-400 border-slate-700 border-b-transparent shadow-md'
                 : 'bg-transparent text-slate-400 border-transparent hover:text-white'
@@ -204,6 +229,19 @@ export const ExcelUploadModal: React.FC<Props> = ({
           >
             <Users2 className="w-4 h-4" />
             <span>Carga Archivo Socios (Reporte 2)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => switchTab('vendedores')}
+            className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold rounded-t-xl transition-all border-t border-x whitespace-nowrap ${
+              activeType === 'vendedores'
+                ? 'bg-[#0e1626] text-purple-400 border-slate-700 border-b-transparent shadow-md'
+                : 'bg-transparent text-slate-400 border-transparent hover:text-white'
+            }`}
+          >
+            <UserPlus className="w-4 h-4" />
+            <span>Cargar Vendedores</span>
           </button>
         </div>
 
@@ -235,7 +273,9 @@ export const ExcelUploadModal: React.FC<Props> = ({
               />
 
               <div className={`w-14 h-14 rounded-2xl border flex items-center justify-center mx-auto mb-4 ${
-                activeType === 'firma'
+                activeType === 'vendedores'
+                  ? 'bg-purple-600/10 border-purple-500/20 text-purple-400'
+                  : activeType === 'firma'
                   ? 'bg-blue-600/10 border-blue-500/20 text-sky-400'
                   : 'bg-emerald-600/10 border-emerald-500/20 text-emerald-400'
               }`}>
@@ -245,18 +285,34 @@ export const ExcelUploadModal: React.FC<Props> = ({
               <h3 className="text-sm font-bold text-white mb-1">
                 {isProcessing
                   ? 'Procesando archivo...'
+                  : activeType === 'vendedores'
+                  ? 'Arrastra tu archivo Excel de Vendedores (2 columnas) aquí'
                   : activeType === 'firma'
                   ? 'Arrastra tu archivo Excel de Firmas / Emisiones aquí'
                   : 'Arrastra tu archivo Excel de Socios (7 Columnas) aquí'}
               </h3>
               <p className="text-xs text-slate-400 max-w-md mx-auto mb-4">
-                {activeType === 'firma'
+                {activeType === 'vendedores'
+                  ? 'Solo contempla 2 columnas: Número y Fecha de Creación. Alimenta exclusivamente el gráfico estadístico de socios creados mes a mes.'
+                  : activeType === 'firma'
                   ? 'Procesa el reporte de emisiones extrayendo el valor de cada firma de la Columna BH (USD) y el canal (Distribuidor Connect / Upconnect) de la Columna CB.'
                   : 'Formato oficial de 7 columnas: SOCIO, FECHA, MES, ID CLIENTE, NOMBRE CLIENTE, TIPO DE PLAN, PRECIO. Los datos se sumarán directamente al Reporte 2.'}
               </p>
 
               <div className="flex flex-wrap items-center justify-center gap-2">
-                {activeType === 'firma' ? (
+                {activeType === 'vendedores' ? (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      downloadVendorTemplateExcel();
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-purple-300 border border-slate-700 shadow-sm"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Descargar Plantilla Vendedores (2 Columnas .xlsx)</span>
+                  </button>
+                ) : activeType === 'firma' ? (
                   <button
                     type="button"
                     onClick={(e) => {
@@ -429,6 +485,53 @@ export const ExcelUploadModal: React.FC<Props> = ({
                 </span>
               </div>
 
+              {/* Vendedores Preview */}
+              {parsedResult.vendorCreations && parsedResult.vendorCreations.length > 0 && (
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-bold text-white">
+                      Vista previa de Vendedores Creados ({parsedResult.vendorCreations.length} registros)
+                    </span>
+                    <span className="text-xs text-purple-400 font-bold tabular-nums">
+                      {parsedResult.vendorMonthlyCreations?.length || 0} meses identificados
+                    </span>
+                  </div>
+
+                  {/* Monthly chips */}
+                  {parsedResult.vendorMonthlyCreations && parsedResult.vendorMonthlyCreations.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mb-3">
+                      {parsedResult.vendorMonthlyCreations.map((m, idx) => (
+                        <div key={idx} className="px-3 py-1.5 rounded-lg bg-purple-950/60 border border-purple-500/30 text-xs flex items-center gap-2">
+                          <span className="font-semibold text-slate-300 capitalize">{m.month.toLowerCase()} {m.year ? `'${String(m.year).slice(-2)}` : ''}:</span>
+                          <strong className="text-purple-300 font-black">{m.count} socios</strong>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="border border-slate-800 rounded-xl overflow-hidden max-h-56 overflow-y-auto">
+                    <table className="w-full text-xs text-left">
+                      <thead className="bg-slate-900 text-slate-400 border-b border-slate-800">
+                        <tr>
+                          <th className="py-2 px-3">Número</th>
+                          <th className="py-2 px-3">Fecha de Creación</th>
+                          <th className="py-2 px-3">Mes Asignado</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800 text-slate-300 tabular-nums">
+                        {parsedResult.vendorCreations.slice(0, 10).map((v, idx) => (
+                          <tr key={idx} className="hover:bg-slate-850">
+                            <td className="py-1.5 px-3 font-semibold text-white">{v.numero}</td>
+                            <td className="py-1.5 px-3 text-purple-300">{v.fechaCreacion}</td>
+                            <td className="py-1.5 px-3 text-slate-300 capitalize">{v.monthName.toLowerCase()}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
               {/* Socios Preview */}
               {parsedResult.socios && parsedResult.socios.length > 0 && (
                 <div>
@@ -573,7 +676,9 @@ export const ExcelUploadModal: React.FC<Props> = ({
                     <div>
                       <div className="text-xs font-bold text-white">Reemplazar Todo el Conjunto</div>
                       <div className="text-[11px] text-slate-400">
-                        {activeType === 'socios'
+                        {activeType === 'vendedores'
+                          ? 'Sobrescribe los registros de vendedores y actualiza el gráfico estadístico mensual.'
+                          : activeType === 'socios'
                           ? 'Sobrescribe los socios y ventas del Reporte 2 únicamente con este archivo.'
                           : 'Sobrescribe y actualiza con los datos del archivo cargado.'}
                       </div>

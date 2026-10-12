@@ -113,6 +113,21 @@ export interface ReportTimeFilter {
   customLabel?: string; // Generated dynamic title label
 }
 
+export interface VendorCreationRecord {
+  numero: string | number;
+  fechaCreacion: string;
+  monthName: string;
+  monthIndex: number;
+  year?: number;
+}
+
+export interface VendorMonthlyCreation {
+  month: string;
+  year?: number;
+  monthIndex: number;
+  count: number;
+}
+
 export interface GlobalDataset {
   // Reporte 1: Archivo de Firmas
   transactions: TransactionRecord[];
@@ -139,6 +154,10 @@ export interface GlobalDataset {
   solutionCategories: SolutionCategory[];
   commercialCross: CommercialCrossPhase;
   cutoffDateSocios?: string;
+
+  // Vendedores Creados (Archivo de 2 columnas: Número y Fecha de Creación)
+  vendorCreations?: VendorCreationRecord[];
+  vendorMonthlyCreations?: VendorMonthlyCreation[];
 
   // General / Settings
   communities: CommunityMetric[];

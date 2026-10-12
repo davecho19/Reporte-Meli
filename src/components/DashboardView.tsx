@@ -10,7 +10,8 @@ import {
   Sparkles,
   BarChart3,
   Trash2,
-  MonitorPlay
+  MonitorPlay,
+  UserPlus
 } from 'lucide-react';
 import { computeReportView, MONTH_NAMES_ES, extractTransactionMonth } from '../utils/reportFilters';
 import { SociosChannelTable } from './SociosChannelTable';
@@ -19,6 +20,7 @@ interface Props {
   dataset: GlobalDataset;
   onOpenUploadFirma: () => void;
   onOpenUploadSocios: () => void;
+  onOpenUploadVendedores?: () => void;
   onClearData: () => void;
   onUpdateFilter: (filter: ReportTimeFilter) => void;
   onAddTransaction?: (trx: TransactionRecord) => void;
@@ -30,6 +32,7 @@ export const DashboardView: React.FC<Props> = ({
   dataset,
   onOpenUploadFirma,
   onOpenUploadSocios,
+  onOpenUploadVendedores,
   onClearData,
   onUpdateFilter,
   onOpenOnlineReport,
@@ -154,6 +157,17 @@ export const DashboardView: React.FC<Props> = ({
             <Users2 className="w-4 h-4" />
             <span>Carga Archivo Socios</span>
           </button>
+
+          {onOpenUploadVendedores && (
+            <button
+              onClick={onOpenUploadVendedores}
+              className="flex items-center gap-2 px-4 py-2.5 text-xs font-bold rounded-xl bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-600/25 transition-all"
+              title="Cargar archivo Excel de vendedores (Número y Fecha de Creación)"
+            >
+              <UserPlus className="w-4 h-4" />
+              <span>Cargar Vendedores</span>
+            </button>
+          )}
 
           <button
             onClick={() => setShowClearConfirm(true)}
@@ -668,6 +682,126 @@ export const DashboardView: React.FC<Props> = ({
         title="Distribución y Cantidad de Socios por Canal"
         subtitle={`Resumen ejecutivo de cartera en ${viewData.periodLabel}: Conteo exacto de socios, operaciones y facturación`}
       />
+
+      {/* GRÁFICO ESTADÍSTICO: SOCIOS CREADOS MES A MES (ARCHIVO DE VENDEDORES) */}
+      {(() => {
+        const monthlyCreations = dataset.vendorMonthlyCreations || [];
+        const hasData = monthlyCreations.length > 0;
+        const totalCreaciones = monthlyCreations.reduce((acc, m) => acc + m.count, 0);
+        const maxCount = hasData ? Math.max(...monthlyCreations.map((m) => m.count), 1) : 1;
+
+        return (
+          <div className="p-6 sm:p-7 rounded-2xl bg-[#0c1322] border border-slate-800 shadow-xl space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-800/80">
+              <div>
+                <span className="text-xs uppercase font-bold tracking-wider text-purple-400">
+                  ESTADÍSTICA DE VENDEDORES
+                </span>
+                <h3 className="text-xl sm:text-2xl font-bold text-white tracking-tight mt-1">
+                  Socios Creados Mes a Mes
+                </h3>
+                <p className="text-xs text-slate-400 mt-1">
+                  Cantidad de socios creados en cada mes según el archivo de vendedores.
+                </p>
+              </div>
+
+              {hasData && (
+                <div className="flex items-center gap-3">
+                  <div className="px-4 py-2 rounded-xl bg-purple-950/40 border border-purple-500/30 text-right">
+                    <div className="text-2xl font-black text-purple-400 tabular-nums">
+                      {totalCreaciones}
+                    </div>
+                    <div className="text-[11px] text-slate-400 font-medium">
+                      Total Creados
+                    </div>
+                  </div>
+                  {onOpenUploadVendedores && (
+                    <button
+                      onClick={onOpenUploadVendedores}
+                      className="px-3.5 py-2 text-xs font-semibold rounded-xl bg-slate-800 hover:bg-slate-700 text-purple-300 border border-purple-500/30 transition-all flex items-center gap-1.5"
+                      title="Cargar o actualizar archivo de vendedores"
+                    >
+                      <UserPlus className="w-3.5 h-3.5" />
+                      <span>Actualizar</span>
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {hasData ? (
+              <div className="space-y-4">
+                {/* Gráfico de Barras Estadístico */}
+                <div className="h-64 pt-8 pb-4 flex items-end gap-3 sm:gap-6 overflow-x-auto border-b border-slate-800/80 px-2">
+                  {monthlyCreations.map((item, idx) => {
+                    const heightPercent = Math.max(10, Math.round((item.count / maxCount) * 100));
+                    return (
+                      <div
+                        key={idx}
+                        className="flex-1 min-w-[56px] max-w-[90px] h-full flex flex-col items-center justify-end group"
+                      >
+                        {/* Cantidad exacta de socios creados */}
+                        <span className="text-xs sm:text-sm font-black text-purple-300 tabular-nums mb-1.5 transition-transform group-hover:scale-110">
+                          {item.count}
+                        </span>
+
+                        {/* Barra */}
+                        <div className="w-full bg-slate-900/80 rounded-t-lg p-0.5 h-full flex items-end">
+                          <div
+                            style={{ height: `${heightPercent}%` }}
+                            className="w-full rounded-t-md bg-gradient-to-t from-purple-700 via-purple-600 to-indigo-500 hover:to-purple-400 shadow-md shadow-purple-950/50 transition-all duration-300"
+                            title={`${item.month}: ${item.count} socios creados`}
+                          />
+                        </div>
+
+                        {/* Mes */}
+                        <div className="mt-2 text-center">
+                          <span className="text-[11px] font-bold text-slate-300 uppercase tracking-tight block">
+                            {item.month.substring(0, 3)}
+                          </span>
+                          {item.year && (
+                            <span className="text-[9px] text-slate-500 block">
+                              {item.year}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between text-xs text-slate-400 gap-2 pt-1">
+                  <span>Indicador basado exclusivamente en el archivo de vendedores (Número y Fecha de Creación).</span>
+                  <span className="font-medium text-slate-300">
+                    {dataset.vendorCreations?.length || totalCreaciones} registros procesados
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div className="py-12 px-4 rounded-xl bg-slate-900/50 border border-slate-800/80 text-center space-y-3">
+                <div className="w-12 h-12 rounded-xl bg-purple-500/10 text-purple-400 flex items-center justify-center mx-auto">
+                  <UserPlus className="w-6 h-6" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-white">Sin datos de vendedores cargados</h4>
+                  <p className="text-xs text-slate-400 max-w-md mx-auto mt-1">
+                    Cargue el archivo de Excel con 2 columnas (Número y Fecha de Creación) para visualizar la cantidad de socios creados mes a mes.
+                  </p>
+                </div>
+                {onOpenUploadVendedores && (
+                  <button
+                    onClick={onOpenUploadVendedores}
+                    className="inline-flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-xl bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-600/25 transition-all"
+                  >
+                    <UserPlus className="w-4 h-4" />
+                    <span>Cargar Vendedores</span>
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Confirmation Modal to Limpiar Data */}
       {showClearConfirm && (

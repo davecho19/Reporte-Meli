@@ -1,13 +1,15 @@
 import * as XLSX from 'xlsx';
-import { GlobalDataset, MonthlyMetric, SocioRecord, TransactionRecord } from '../types';
+import { GlobalDataset, MonthlyMetric, SocioRecord, TransactionRecord, VendorCreationRecord, VendorMonthlyCreation } from '../types';
 
 export interface ParsedExcelResult {
   sheetNames: string[];
   activeSheet: string;
-  recognizedType: 'transactions' | 'monthly_summary' | 'socios' | 'unknown';
+  recognizedType: 'transactions' | 'monthly_summary' | 'socios' | 'vendedores' | 'unknown';
   transactions: TransactionRecord[];
   monthlyMetrics?: MonthlyMetric[];
   socios?: SocioRecord[];
+  vendorCreations?: VendorCreationRecord[];
+  vendorMonthlyCreations?: VendorMonthlyCreation[];
   rawRowsCount: number;
   unmappedColumns: string[];
   recognizedColumns: Record<string, string>;
@@ -571,7 +573,7 @@ export const isSocioColumnHeader = (ck: string): boolean => {
 
 export const parseExcelFile = async (
   file: File,
-  forcedType?: 'firma' | 'socios' | 'monthly'
+  forcedType?: 'firma' | 'socios' | 'monthly' | 'vendedores'
 ): Promise<ParsedExcelResult> => {
   const data = await file.arrayBuffer();
   const workbook = XLSX.read(data, { cellDates: true, cellNF: true, cellText: true, raw: true });
@@ -691,6 +693,101 @@ export const parseExcelFile = async (
 
   const rawHeaders: string[] = (rawRows[headerRowIndex] || []).map((h: any) => String(h || '').trim());
   const dataRows = rawRows.slice(headerRowIndex + 1).filter((row) => Array.isArray(row) && row.some((c) => c !== ''));
+
+  // VENDEDORES 2-COLUMN FORMAT:
+  // "el archivo de excel que voy a cargar solo contemplara 2 columnas numero y fecha de creacion asi que, unicamente ese archivo indicara en este nuevo grafico estadistico la cantidad de vendedores creados en el mes"
+  const isVendedores2ColFormat = forcedType === 'vendedores' || (
+    rawHeaders.length <= 4 &&
+    rawHeaders.some((h) => cleanKey(h).includes('creacion') || cleanKey(h).includes('creación') || cleanKey(h).includes('alta')) &&
+    rawHeaders.some((h) => cleanKey(h).includes('numero') || cleanKey(h).includes('número') || cleanKey(h) === 'nro' || cleanKey(h) === 'num' || cleanKey(h) === '#' || cleanKey(h) === 'id')
+  );
+
+  if (isVendedores2ColFormat) {
+    let numeroCol = -1;
+    let fechaCol = -1;
+
+    rawHeaders.forEach((h, idx) => {
+      const ck = cleanKey(h);
+      if (
+        (ck === 'numero' || ck === 'número' || ck === 'nro' || ck === 'num' || ck === 'id' || ck === 'codigo' || ck === '#' || ck.includes('numero') || ck.includes('número')) &&
+        numeroCol === -1
+      ) {
+        numeroCol = idx;
+      } else if (
+        (ck.includes('creacion') || ck.includes('creación') || ck.includes('alta') || ck.includes('fecha') || ck.includes('date')) &&
+        fechaCol === -1
+      ) {
+        fechaCol = idx;
+      }
+    });
+
+    if (numeroCol === -1) numeroCol = 0;
+    if (fechaCol === -1) fechaCol = rawHeaders.length > 1 ? 1 : 0;
+
+    const vendorCreations: VendorCreationRecord[] = [];
+    const monthMap: Record<string, { month: string; monthIndex: number; year: number; count: number }> = {};
+
+    dataRows.forEach((row, idx) => {
+      if (!row || row.length === 0) return;
+      const rawNum = row[numeroCol] !== undefined && row[numeroCol] !== null ? String(row[numeroCol]).trim() : '';
+      const rawDate = row[fechaCol];
+
+      if (!rawNum && (rawDate === undefined || rawDate === null || String(rawDate).trim() === '')) return;
+
+      const dateStr = parseExcelDate(rawDate);
+      const parts = dateStr.split('-');
+      const year = parseInt(parts[0], 10) || 2026;
+      const monthIndex = Math.max(0, Math.min(11, (parseInt(parts[1], 10) || 1) - 1));
+      const monthName = MONTH_NAMES_ES[monthIndex];
+
+      vendorCreations.push({
+        numero: rawNum || (idx + 1),
+        fechaCreacion: dateStr,
+        monthName,
+        monthIndex,
+        year,
+      });
+
+      const groupKey = `${year}-${String(monthIndex).padStart(2, '0')}`;
+      if (!monthMap[groupKey]) {
+        monthMap[groupKey] = {
+          month: monthName,
+          monthIndex,
+          year,
+          count: 0,
+        };
+      }
+      monthMap[groupKey].count += 1;
+    });
+
+    // Orden cronológico por año y mes
+    const vendorMonthlyCreations: VendorMonthlyCreation[] = Object.values(monthMap)
+      .sort((a, b) => (a.year !== b.year ? a.year - b.year : a.monthIndex - b.monthIndex))
+      .map((m) => ({
+        month: m.month,
+        year: m.year,
+        monthIndex: m.monthIndex,
+        count: m.count,
+      }));
+
+    return {
+      sheetNames,
+      activeSheet: activeSheetName,
+      recognizedType: 'vendedores',
+      transactions: [],
+      socios: [],
+      vendorCreations,
+      vendorMonthlyCreations,
+      rawRowsCount: dataRows.length,
+      unmappedColumns: [],
+      recognizedColumns: {
+        'Número': numeroCol !== -1 ? rawHeaders[numeroCol] : 'Columna 1',
+        'Fecha de Creación': fechaCol !== -1 ? rawHeaders[fechaCol] : 'Columna 2',
+      },
+      warnings: [],
+      detectedMonth: vendorMonthlyCreations.length > 0 ? vendorMonthlyCreations[vendorMonthlyCreations.length - 1].month : undefined,
+    };
+  }
 
   // SPECIFIC FORMAT CHECK: 7-Column Socios Format (as shown in reference image):
   // Column A: SOCIO | Column B: FECHA | Column C: MES | Column D: ID CLIENTE | Column E: NOMBRE CLIENTE | Column F: TIPO DE PLAN | Column G: PRECIO
@@ -2335,4 +2432,28 @@ export const downloadTemplateExcel = (): void => {
   XLSX.utils.book_append_sheet(wb, wsMonth, 'Plantilla Resumen Mensual');
 
   XLSX.writeFile(wb, 'Plantilla_Reporte_UpConnect.xlsx');
+};
+
+/**
+ * Downloads a simple 2-column template Excel file for vendor creation statistics
+ * Column 1: Número
+ * Column 2: Fecha de Creación
+ */
+export const downloadVendorTemplateExcel = (): void => {
+  const wb = XLSX.utils.book_new();
+  const templateRows = [
+    { 'Número': 1, 'Fecha de Creación': '2026-03-12' },
+    { 'Número': 2, 'Fecha de Creación': '2026-03-25' },
+    { 'Número': 3, 'Fecha de Creación': '2026-04-08' },
+    { 'Número': 4, 'Fecha de Creación': '2026-04-22' },
+    { 'Número': 5, 'Fecha de Creación': '2026-05-04' },
+    { 'Número': 6, 'Fecha de Creación': '2026-05-19' },
+    { 'Número': 7, 'Fecha de Creación': '2026-06-11' },
+    { 'Número': 8, 'Fecha de Creación': '2026-07-03' },
+    { 'Número': 9, 'Fecha de Creación': '2026-08-15' },
+    { 'Número': 10, 'Fecha de Creación': '2026-09-02' },
+  ];
+  const ws = XLSX.utils.json_to_sheet(templateRows);
+  XLSX.utils.book_append_sheet(wb, ws, 'Vendedores');
+  XLSX.writeFile(wb, 'Plantilla_Vendedores_Creacion.xlsx');
 };

@@ -21,6 +21,9 @@ export const initialDataset: GlobalDataset = {
   sistemasTransactions: [],
   sistemasMonthlyMetrics: [],
   
+  vendorCreations: [],
+  vendorMonthlyCreations: [],
+
   weeklyBreakdownType1: [],
   weeklyBreakdownType2: [],
 

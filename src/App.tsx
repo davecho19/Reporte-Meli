@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { GlobalDataset, TransactionRecord, MonthlyMetric, SocioRecord, ReportTimeFilter } from './types';
+import { GlobalDataset, TransactionRecord, MonthlyMetric, SocioRecord, ReportTimeFilter, VendorCreationRecord, VendorMonthlyCreation } from './types';
 import { initialDataset } from './data/initialData';
 import { Navigation, NavView } from './components/Navigation';
 import { DashboardView } from './components/DashboardView';
@@ -90,6 +90,11 @@ export default function App() {
     setIsUploadOpen(true);
   };
 
+  const handleOpenUploadVendedores = () => {
+    setUploadTargetType('vendedores');
+    setIsUploadOpen(true);
+  };
+
   const handleUpdateFilter = (filter: ReportTimeFilter) => {
     const updated = {
       ...dataset,
@@ -111,10 +116,12 @@ export default function App() {
 
   // Handle incoming data from Excel import
   const handleApplyData = async (result: {
-    type: 'transactions' | 'monthly_summary' | 'socios';
+    type: 'transactions' | 'monthly_summary' | 'socios' | 'vendedores';
     transactions?: TransactionRecord[];
     monthlyMetrics?: MonthlyMetric[];
     socios?: SocioRecord[];
+    vendorCreations?: VendorCreationRecord[];
+    vendorMonthlyCreations?: VendorMonthlyCreation[];
     detectedMonth?: string;
     detectedCutoffDate?: string;
     dateRangeStr?: string;
@@ -251,6 +258,32 @@ export default function App() {
     } else if (result.type === 'monthly_summary' && result.monthlyMetrics) {
       updatedDataset.monthlyMetrics = result.monthlyMetrics;
       showToast('success', 'Matriz de facturación mensual actualizada exitosamente.');
+    } else if (result.type === 'vendedores') {
+      const incomingCreations = result.vendorCreations || [];
+      const incomingMonthly = result.vendorMonthlyCreations || [];
+
+      if (result.mode === 'append' && dataset.vendorCreations && dataset.vendorCreations.length > 0) {
+        const mergedCreations = [...dataset.vendorCreations, ...incomingCreations];
+        const monthMap: Record<string, { month: string; monthIndex: number; year: number; count: number }> = {};
+        mergedCreations.forEach((c) => {
+          const key = `${c.year || 2026}-${String(c.monthIndex).padStart(2, '0')}`;
+          if (!monthMap[key]) {
+            monthMap[key] = { month: c.monthName, monthIndex: c.monthIndex, year: c.year || 2026, count: 0 };
+          }
+          monthMap[key].count += 1;
+        });
+        const mergedMonthly = Object.values(monthMap)
+          .sort((a, b) => (a.year !== b.year ? a.year - b.year : a.monthIndex - b.monthIndex))
+          .map((m) => ({ month: m.month, year: m.year, monthIndex: m.monthIndex, count: m.count }));
+
+        updatedDataset.vendorCreations = mergedCreations;
+        updatedDataset.vendorMonthlyCreations = mergedMonthly;
+        showToast('success', `Se anexaron ${incomingCreations.length} vendedores.`);
+      } else {
+        updatedDataset.vendorCreations = incomingCreations;
+        updatedDataset.vendorMonthlyCreations = incomingMonthly;
+        showToast('success', `Se cargaron ${incomingCreations.length} vendedores creados.`);
+      }
     }
 
     setDataset(updatedDataset);
@@ -265,6 +298,8 @@ export default function App() {
       monthlyMetrics: [],
       socios: [],
       transactions: [],
+      vendorCreations: [],
+      vendorMonthlyCreations: [],
       weeklyBreakdownType1: [],
       weeklyBreakdownType2: [],
       portfolioDurations: [],
@@ -377,6 +412,7 @@ export default function App() {
             dataset={dataset}
             onOpenUploadFirma={handleOpenUploadFirma}
             onOpenUploadSocios={handleOpenUploadSocios}
+            onOpenUploadVendedores={handleOpenUploadVendedores}
             onClearData={handleClearData}
             onUpdateFilter={handleUpdateFilter}
             onAddTransaction={handleAddManualTransaction}
