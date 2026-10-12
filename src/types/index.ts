@@ -79,6 +79,7 @@ export interface CommunityMetric {
   subtitle: string;
   description: string;
   color: string;
+  roleBadge?: string;
 }
 
 export interface GitHubConfig {
@@ -119,6 +120,7 @@ export interface VendorCreationRecord {
   monthName: string;
   monthIndex: number;
   year?: number;
+  rol?: 'Distribuidor Upconnect' | 'Distribuidor Connect' | string;
 }
 
 export interface VendorMonthlyCreation {
@@ -126,6 +128,8 @@ export interface VendorMonthlyCreation {
   year?: number;
   monthIndex: number;
   count: number;
+  upconnectCount: number;
+  connectCount: number;
 }
 
 export interface GlobalDataset {

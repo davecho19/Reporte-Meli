@@ -103,6 +103,7 @@ export const UnifiedOnlinePresentation: React.FC<Props> = ({
     { id: 'r2_solutions', reportPart: 2, partBadge: 'PARTE II · REPORTE 2', slideNumberInPart: 6, globalIndex: 13, title: 'Ventas por Categoría de Solución UpConta', subtitle: 'Portafolio de Sistemas, ERP y Servicios', internalId: 'solutions' },
     { id: 'r2_funnel', reportPart: 2, partBadge: 'PARTE II · REPORTE 2', slideNumberInPart: 7, globalIndex: 14, title: 'Canal de Distribución - Embudo de Socios', subtitle: 'Conteo Cuantitativo y Franquiciados', internalId: 'funnel' },
     { id: 'r2_cross', reportPart: 2, partBadge: 'PARTE II · REPORTE 2', slideNumberInPart: 8, globalIndex: 15, title: 'Estrategia Comercial - Cruce Integral UpConta', subtitle: 'Fuerza Comercial vs Red de Socios', internalId: 'cross' },
+    { id: 'r2_vendor_creations', reportPart: 2, partBadge: 'FINAL · ESTADÍSTICA', slideNumberInPart: 9, globalIndex: 16, title: 'Socios Creados Mes a Mes por Rol', subtitle: 'Distribuidor Upconnect vs Distribuidor Connect', internalId: 'vendor_creations' },
   ];
 
   const totalSlides = unifiedSlides.length;
@@ -1744,8 +1745,150 @@ export const UnifiedOnlinePresentation: React.FC<Props> = ({
                 </div>
 
                 <div className="absolute bottom-4 left-8 right-8 flex justify-between items-center text-[11px] text-slate-500 border-t border-slate-800/60 pt-3">
-                  <span>Presentación Unificada Finalizada</span>
-                  <span>Pág. 15 de 15</span>
+                  <span>Presentación Unificada</span>
+                  <span>Pág. 15 de {totalSlides}</span>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* ========================================================================= */}
+          {/* SLIDE 16: Estadística de Vendedores - Socios Creados Mes a Mes por Rol */}
+          {/* ========================================================================= */}
+          {currentSlide === 16 && (() => {
+            const monthlyCreations = dataset.vendorMonthlyCreations || [];
+            const hasData = monthlyCreations.length > 0;
+            const totalCreaciones = monthlyCreations.reduce((acc, m) => acc + m.count, 0);
+            const totalUpconnect = monthlyCreations.reduce((acc, m) => acc + (m.upconnectCount ?? (m.count || 0)), 0);
+            const totalConnect = monthlyCreations.reduce((acc, m) => acc + (m.connectCount ?? 0), 0);
+            const maxVal = hasData
+              ? Math.max(...monthlyCreations.flatMap((m) => [m.upconnectCount ?? 0, m.connectCount ?? 0]), 1)
+              : 1;
+
+            return (
+              <div className="h-full flex flex-col justify-between p-6 sm:p-8 relative bg-[#0c1322]">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-3 border-b border-slate-800">
+                  <div>
+                    <span className="text-xs font-bold uppercase tracking-wider text-purple-400">
+                      ESTADÍSTICA DE VENDEDORES · REPORTE CONSOLIDADO
+                    </span>
+                    <h2 className="text-xl sm:text-2xl font-bold text-white tracking-tight mt-0.5">
+                      Socios Creados Mes a Mes por Rol
+                    </h2>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Desglose cuantitativo por Distribuidor Upconnect y Distribuidor Connect
+                    </p>
+                  </div>
+
+                  {hasData && (
+                    <div className="flex items-center gap-3">
+                      <div className="px-3.5 py-1.5 rounded-xl bg-sky-950/50 border border-sky-500/30 text-right">
+                        <div className="text-lg font-black text-sky-400 tabular-nums">{totalUpconnect}</div>
+                        <div className="text-[10px] text-slate-400 font-semibold uppercase">Distribuidor Upconnect</div>
+                      </div>
+                      <div className="px-3.5 py-1.5 rounded-xl bg-amber-950/50 border border-amber-500/30 text-right">
+                        <div className="text-lg font-black text-amber-400 tabular-nums">{totalConnect}</div>
+                        <div className="text-[10px] text-slate-400 font-semibold uppercase">Distribuidor Connect</div>
+                      </div>
+                      <div className="px-3.5 py-1.5 rounded-xl bg-purple-950/50 border border-purple-500/30 text-right">
+                        <div className="text-lg font-black text-purple-400 tabular-nums">{totalCreaciones}</div>
+                        <div className="text-[10px] text-slate-400 font-semibold uppercase">Total Creados</div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {hasData ? (
+                  <div className="my-auto py-2 space-y-3">
+                    <div className="flex items-center gap-5 text-xs">
+                      <div className="flex items-center gap-2">
+                        <span className="w-3 h-3 rounded bg-gradient-to-tr from-sky-600 to-sky-400 inline-block shadow-sm shadow-sky-500/30" />
+                        <span className="font-semibold text-slate-200">Distribuidor Upconnect</span>
+                        <span className="text-sky-400 font-bold tabular-nums">({totalUpconnect})</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="w-3 h-3 rounded bg-gradient-to-tr from-amber-600 to-amber-400 inline-block shadow-sm shadow-amber-500/30" />
+                        <span className="font-semibold text-slate-200">Distribuidor Connect</span>
+                        <span className="text-amber-400 font-bold tabular-nums">({totalConnect})</span>
+                      </div>
+                    </div>
+
+                    <div className="h-64 pt-6 pb-2 flex items-end gap-3 sm:gap-6 overflow-x-auto border-b border-slate-800/80 px-2">
+                      {monthlyCreations.map((item, idx) => {
+                        const upCount = item.upconnectCount ?? (item.count || 0);
+                        const conCount = item.connectCount ?? 0;
+                        const upHeightPercent = upCount > 0 ? Math.max(10, Math.round((upCount / maxVal) * 100)) : 3;
+                        const conHeightPercent = conCount > 0 ? Math.max(10, Math.round((conCount / maxVal) * 100)) : 3;
+
+                        return (
+                          <div
+                            key={idx}
+                            className="flex-1 min-w-[85px] max-w-[120px] h-full flex flex-col items-center justify-end group"
+                          >
+                            <div className="w-full bg-slate-900/60 rounded-t-xl p-1.5 h-full flex items-end justify-center gap-2 border-b border-slate-700/40">
+                              {/* Upconnect column */}
+                              <div className="flex-1 h-full flex flex-col items-center justify-end">
+                                <span className="text-[11px] font-black text-sky-400 tabular-nums mb-1">
+                                  {upCount}
+                                </span>
+                                <div
+                                  style={{ height: `${upHeightPercent}%` }}
+                                  className={`w-full rounded-t-md transition-all duration-300 ${
+                                    upCount > 0
+                                      ? 'bg-gradient-to-t from-sky-700 via-sky-500 to-sky-400'
+                                      : 'bg-slate-800/40'
+                                  }`}
+                                  title={`Distribuidor Upconnect (${item.month}): ${upCount}`}
+                                />
+                              </div>
+
+                              {/* Connect column */}
+                              <div className="flex-1 h-full flex flex-col items-center justify-end">
+                                <span className="text-[11px] font-black text-amber-400 tabular-nums mb-1">
+                                  {conCount}
+                                </span>
+                                <div
+                                  style={{ height: `${conHeightPercent}%` }}
+                                  className={`w-full rounded-t-md transition-all duration-300 ${
+                                    conCount > 0
+                                      ? 'bg-gradient-to-t from-amber-700 via-amber-500 to-amber-400'
+                                      : 'bg-slate-800/40'
+                                  }`}
+                                  title={`Distribuidor Connect (${item.month}): ${conCount}`}
+                                />
+                              </div>
+                            </div>
+
+                            <div className="mt-2 text-center">
+                              <span className="text-[11px] font-bold text-slate-300 uppercase tracking-tight block">
+                                {item.month.substring(0, 3)}
+                              </span>
+                              {item.year && (
+                                <span className="text-[9px] text-slate-500 block">
+                                  {item.year}
+                                </span>
+                              )}
+                              <span className="text-[9px] text-slate-400 font-semibold block mt-0.5">
+                                {item.count} tot.
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="py-12 text-center my-auto bg-slate-900/40 rounded-2xl border border-slate-800 p-8 space-y-2">
+                    <div className="text-sm font-bold text-white">Sin registros de vendedores cargados</div>
+                    <p className="text-xs text-slate-400 max-w-md mx-auto">
+                      Cargue el archivo de vendedores en el Dashboard para visualizar la estadística de creación mes a mes desglosada por Distribuidor Upconnect y Distribuidor Connect.
+                    </p>
+                  </div>
+                )}
+
+                <div className="flex justify-between items-center text-[11px] text-slate-500 pt-3 border-t border-slate-800/60">
+                  <span>Indicador basado exclusivamente en el archivo de vendedores (Número, Fecha de Creación y Rol).</span>
+                  <span>Pág. 16 de 16</span>
                 </div>
               </div>
             );
@@ -1786,7 +1929,7 @@ export const UnifiedOnlinePresentation: React.FC<Props> = ({
           >
             <ChevronLeft className="w-4 h-4" />
           </button>
-          <span className="font-bold text-white tabular-nums">{currentSlide} / 15</span>
+          <span className="font-bold text-white tabular-nums">{currentSlide} / {totalSlides}</span>
           <button
             onClick={() => setCurrentSlide((prev) => Math.min(prev + 1, totalSlides))}
             disabled={currentSlide === totalSlides}

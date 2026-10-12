@@ -68,6 +68,7 @@ const ACCENT_BLUE = '2563EB';
 const ACCENT_SKY = '38BDF8';
 const ACCENT_AMBER = 'F59E0B';
 const ACCENT_EMERALD = '10B981';
+const ACCENT_PURPLE = 'A855F7';
 const TEXT_MUTED = '94A3B8';
 const TEXT_WHITE = 'FFFFFF';
 
@@ -647,6 +648,76 @@ export const exportCombinedPresentationsToPPTX = async (
   slideCross.addText(`• Operaciones: ${viewData.totalCoCount} transacciones distribuidas\n• Participación: ${coSalesPct}% del ecosistema\n• Enfoque: Red de franquiciados y contadores certificados UpConta`, {
     x: 7.1, y: 3.2, w: 5.0, h: 2.0, fontSize: 11, color: TEXT_MUTED,
   });
+
+  // =========================================================================
+  // PARTE FINAL: ESTADÍSTICA DE VENDEDORES (SOCIOS CREADOS MES A MES POR ROL)
+  // =========================================================================
+  const slideVendors = pptx.addSlide();
+  slideVendors.background = { color: BG_DARK };
+  slideVendors.addText('ESTADÍSTICA DE VENDEDORES · REPORTE CONSOLIDADO', {
+    x: 0.8, y: 0.5, w: 8.0, h: 0.3, fontSize: 10, bold: true, color: ACCENT_PURPLE,
+  });
+  slideVendors.addText('Socios Creados Mes a Mes por Rol', {
+    x: 0.8, y: 0.8, w: 11.6, h: 0.6, fontSize: 20, bold: true, color: TEXT_WHITE,
+  });
+
+  const vendorMonthly = dataset.vendorMonthlyCreations || [];
+  const totalVendors = vendorMonthly.reduce((a, b) => a + b.count, 0);
+  const totalUpVendors = vendorMonthly.reduce((a, b) => a + (b.upconnectCount ?? (b.count || 0)), 0);
+  const totalCoVendors = vendorMonthly.reduce((a, b) => a + (b.connectCount ?? 0), 0);
+
+  // 3 Metric Cards on top
+  slideVendors.addShape(pptx.ShapeType.roundRect, { x: 0.8, y: 1.5, w: 3.6, h: 1.1, fill: { color: CARD_BG }, line: { color: ACCENT_SKY, width: 1 }, rectRadius: 0.08 });
+  slideVendors.addText('DISTRIBUIDOR UPCONNECT', { x: 1.0, y: 1.6, w: 3.2, h: 0.25, fontSize: 9, bold: true, color: ACCENT_SKY });
+  slideVendors.addText(`${totalUpVendors}`, { x: 1.0, y: 1.85, w: 3.2, h: 0.45, fontSize: 22, bold: true, color: ACCENT_SKY });
+  slideVendors.addText('Socios Registrados', { x: 1.0, y: 2.3, w: 3.2, h: 0.2, fontSize: 8, color: TEXT_MUTED });
+
+  slideVendors.addShape(pptx.ShapeType.roundRect, { x: 4.8, y: 1.5, w: 3.6, h: 1.1, fill: { color: CARD_BG }, line: { color: ACCENT_AMBER, width: 1 }, rectRadius: 0.08 });
+  slideVendors.addText('DISTRIBUIDOR CONNECT', { x: 5.0, y: 1.6, w: 3.2, h: 0.25, fontSize: 9, bold: true, color: ACCENT_AMBER });
+  slideVendors.addText(`${totalCoVendors}`, { x: 5.0, y: 1.85, w: 3.2, h: 0.45, fontSize: 22, bold: true, color: ACCENT_AMBER });
+  slideVendors.addText('Socios Registrados', { x: 5.0, y: 2.3, w: 3.2, h: 0.2, fontSize: 8, color: TEXT_MUTED });
+
+  slideVendors.addShape(pptx.ShapeType.roundRect, { x: 8.8, y: 1.5, w: 3.6, h: 1.1, fill: { color: CARD_BG }, line: { color: ACCENT_PURPLE, width: 1 }, rectRadius: 0.08 });
+  slideVendors.addText('TOTAL GENERAL CREADOS', { x: 9.0, y: 1.6, w: 3.2, h: 0.25, fontSize: 9, bold: true, color: ACCENT_PURPLE });
+  slideVendors.addText(`${totalVendors}`, { x: 9.0, y: 1.85, w: 3.2, h: 0.45, fontSize: 22, bold: true, color: ACCENT_PURPLE });
+  slideVendors.addText('Registros Procesados', { x: 9.0, y: 2.3, w: 3.2, h: 0.2, fontSize: 8, color: TEXT_MUTED });
+
+  // Table with Month-by-month breakdown
+  if (vendorMonthly.length > 0) {
+    const tableHeader = [
+      { text: 'Mes / Período', options: { bold: true, fill: { color: '0b192e' }, color: 'ffffff', align: 'left' } },
+      { text: 'Año', options: { bold: true, fill: { color: '0b192e' }, color: 'ffffff', align: 'center' } },
+      { text: 'Distribuidor Upconnect', options: { bold: true, fill: { color: '0b192e' }, color: ACCENT_SKY, align: 'center' } },
+      { text: 'Distribuidor Connect', options: { bold: true, fill: { color: '0b192e' }, color: ACCENT_AMBER, align: 'center' } },
+      { text: 'Total Mes', options: { bold: true, fill: { color: '0b192e' }, color: 'ffffff', align: 'center' } },
+    ];
+
+    const tableRows = vendorMonthly.map((m) => {
+      const up = m.upconnectCount ?? (m.count || 0);
+      const con = m.connectCount ?? 0;
+      return [
+        { text: m.month, options: { bold: true, color: 'ffffff', align: 'left' } },
+        { text: String(m.year || 2026), options: { color: TEXT_MUTED, align: 'center' } },
+        { text: `${up} socios`, options: { bold: true, color: ACCENT_SKY, align: 'center' } },
+        { text: `${con} socios`, options: { bold: true, color: ACCENT_AMBER, align: 'center' } },
+        { text: `${m.count} socios`, options: { bold: true, color: 'ffffff', align: 'center' } },
+      ];
+    });
+
+    slideVendors.addTable([tableHeader, ...tableRows] as any, {
+      x: 0.8,
+      y: 2.8,
+      w: 11.6,
+      fill: { color: CARD_BG },
+      color: 'ffffff',
+      fontSize: 10,
+      border: { pt: 1, color: '1e293b' },
+    });
+  } else {
+    slideVendors.addShape(pptx.ShapeType.roundRect, { x: 0.8, y: 2.8, w: 11.6, h: 3.5, fill: { color: CARD_BG }, line: { color: '334155', width: 1 }, rectRadius: 0.1 });
+    slideVendors.addText('Sin registros de archivo de vendedores cargados.', { x: 1.0, y: 4.2, w: 11.2, h: 0.5, fontSize: 13, bold: true, color: TEXT_MUTED, align: 'center' });
+    slideVendors.addText('Cargue el archivo de Excel con Número, Fecha de Creación y Rol para poblar este gráfico estadístico.', { x: 1.0, y: 4.7, w: 11.2, h: 0.4, fontSize: 10, color: '64748b', align: 'center' });
+  }
 
   // Save the single unified presentation
   const fileName = `Presentacion_Consolidada_UpConnect_UpConta_${viewData.periodLabel.replace(/[^a-zA-Z0-9]/g, '_')}.pptx`;

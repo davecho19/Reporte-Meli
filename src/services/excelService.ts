@@ -280,6 +280,21 @@ export const formatClientId = (raw: any): string => {
 };
 
 /**
+ * Standardize vendor role to 'Distribuidor Upconnect' or 'Distribuidor Connect'
+ */
+export const normalizeVendorRole = (val: any): 'Distribuidor Upconnect' | 'Distribuidor Connect' => {
+  if (!val) return 'Distribuidor Upconnect';
+  const str = String(val).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  if (str.includes('up') || str.includes('direct')) {
+    return 'Distribuidor Upconnect';
+  }
+  if (str.includes('connect') || str.includes('franquicia') || str.includes('aliad')) {
+    return 'Distribuidor Connect';
+  }
+  return 'Distribuidor Upconnect';
+};
+
+/**
  * Universal flexible number parser supporting:
  * - Comma as decimal: "29,99", "15,00", "14,50" -> 29.99, 15.00, 14.50
  * - Dot as decimal: "29.99", "15.00", "3.16" -> 29.99, 15.00, 3.16
@@ -694,17 +709,18 @@ export const parseExcelFile = async (
   const rawHeaders: string[] = (rawRows[headerRowIndex] || []).map((h: any) => String(h || '').trim());
   const dataRows = rawRows.slice(headerRowIndex + 1).filter((row) => Array.isArray(row) && row.some((c) => c !== ''));
 
-  // VENDEDORES 2-COLUMN FORMAT:
-  // "el archivo de excel que voy a cargar solo contemplara 2 columnas numero y fecha de creacion asi que, unicamente ese archivo indicara en este nuevo grafico estadistico la cantidad de vendedores creados en el mes"
-  const isVendedores2ColFormat = forcedType === 'vendedores' || (
-    rawHeaders.length <= 4 &&
+  // VENDEDORES FORMAT (Número, Fecha de Creación y Rol):
+  // "en el archivo de carga vendedores ahora tendra una columna adicional que dice Rol, en el grafico estadistico me tiene que indicar la cantidad por distribuidor upconnect y disitrbuidor connect solo realiza lo que te solicito"
+  const isVendedoresFormat = forcedType === 'vendedores' || (
+    rawHeaders.length <= 6 &&
     rawHeaders.some((h) => cleanKey(h).includes('creacion') || cleanKey(h).includes('creación') || cleanKey(h).includes('alta')) &&
     rawHeaders.some((h) => cleanKey(h).includes('numero') || cleanKey(h).includes('número') || cleanKey(h) === 'nro' || cleanKey(h) === 'num' || cleanKey(h) === '#' || cleanKey(h) === 'id')
   );
 
-  if (isVendedores2ColFormat) {
+  if (isVendedoresFormat) {
     let numeroCol = -1;
     let fechaCol = -1;
+    let rolCol = -1;
 
     rawHeaders.forEach((h, idx) => {
       const ck = cleanKey(h);
@@ -718,19 +734,32 @@ export const parseExcelFile = async (
         fechaCol === -1
       ) {
         fechaCol = idx;
+      } else if (
+        (ck === 'rol' || ck === 'role' || ck.includes('rol') || ck === 'canal' || ck.includes('distribuidor')) &&
+        rolCol === -1
+      ) {
+        rolCol = idx;
       }
     });
 
     if (numeroCol === -1) numeroCol = 0;
     if (fechaCol === -1) fechaCol = rawHeaders.length > 1 ? 1 : 0;
+    if (rolCol === -1 && rawHeaders.length > 2) {
+      // Si hay una 3ra columna y no es número ni fecha, considerarla como Rol
+      const otherIndices = [0, 1, 2].filter((i) => i !== numeroCol && i !== fechaCol);
+      if (otherIndices.length > 0 && otherIndices[0] < rawHeaders.length) {
+        rolCol = otherIndices[0];
+      }
+    }
 
     const vendorCreations: VendorCreationRecord[] = [];
-    const monthMap: Record<string, { month: string; monthIndex: number; year: number; count: number }> = {};
+    const monthMap: Record<string, { month: string; monthIndex: number; year: number; count: number; upconnectCount: number; connectCount: number }> = {};
 
     dataRows.forEach((row, idx) => {
       if (!row || row.length === 0) return;
       const rawNum = row[numeroCol] !== undefined && row[numeroCol] !== null ? String(row[numeroCol]).trim() : '';
       const rawDate = row[fechaCol];
+      const rawRol = rolCol !== -1 ? row[rolCol] : undefined;
 
       if (!rawNum && (rawDate === undefined || rawDate === null || String(rawDate).trim() === '')) return;
 
@@ -739,6 +768,7 @@ export const parseExcelFile = async (
       const year = parseInt(parts[0], 10) || 2026;
       const monthIndex = Math.max(0, Math.min(11, (parseInt(parts[1], 10) || 1) - 1));
       const monthName = MONTH_NAMES_ES[monthIndex];
+      const role = normalizeVendorRole(rawRol);
 
       vendorCreations.push({
         numero: rawNum || (idx + 1),
@@ -746,6 +776,7 @@ export const parseExcelFile = async (
         monthName,
         monthIndex,
         year,
+        rol: role,
       });
 
       const groupKey = `${year}-${String(monthIndex).padStart(2, '0')}`;
@@ -755,9 +786,16 @@ export const parseExcelFile = async (
           monthIndex,
           year,
           count: 0,
+          upconnectCount: 0,
+          connectCount: 0,
         };
       }
       monthMap[groupKey].count += 1;
+      if (role === 'Distribuidor Connect') {
+        monthMap[groupKey].connectCount += 1;
+      } else {
+        monthMap[groupKey].upconnectCount += 1;
+      }
     });
 
     // Orden cronológico por año y mes
@@ -768,6 +806,8 @@ export const parseExcelFile = async (
         year: m.year,
         monthIndex: m.monthIndex,
         count: m.count,
+        upconnectCount: m.upconnectCount,
+        connectCount: m.connectCount,
       }));
 
     return {
@@ -783,6 +823,7 @@ export const parseExcelFile = async (
       recognizedColumns: {
         'Número': numeroCol !== -1 ? rawHeaders[numeroCol] : 'Columna 1',
         'Fecha de Creación': fechaCol !== -1 ? rawHeaders[fechaCol] : 'Columna 2',
+        ...(rolCol !== -1 ? { 'Rol': rawHeaders[rolCol] } : {}),
       },
       warnings: [],
       detectedMonth: vendorMonthlyCreations.length > 0 ? vendorMonthlyCreations[vendorMonthlyCreations.length - 1].month : undefined,
@@ -2435,23 +2476,24 @@ export const downloadTemplateExcel = (): void => {
 };
 
 /**
- * Downloads a simple 2-column template Excel file for vendor creation statistics
+ * Downloads template Excel file for vendor creation statistics (Número, Fecha de Creación y Rol)
  * Column 1: Número
  * Column 2: Fecha de Creación
+ * Column 3: Rol (Distribuidor Upconnect / Distribuidor Connect)
  */
 export const downloadVendorTemplateExcel = (): void => {
   const wb = XLSX.utils.book_new();
   const templateRows = [
-    { 'Número': 1, 'Fecha de Creación': '2026-03-12' },
-    { 'Número': 2, 'Fecha de Creación': '2026-03-25' },
-    { 'Número': 3, 'Fecha de Creación': '2026-04-08' },
-    { 'Número': 4, 'Fecha de Creación': '2026-04-22' },
-    { 'Número': 5, 'Fecha de Creación': '2026-05-04' },
-    { 'Número': 6, 'Fecha de Creación': '2026-05-19' },
-    { 'Número': 7, 'Fecha de Creación': '2026-06-11' },
-    { 'Número': 8, 'Fecha de Creación': '2026-07-03' },
-    { 'Número': 9, 'Fecha de Creación': '2026-08-15' },
-    { 'Número': 10, 'Fecha de Creación': '2026-09-02' },
+    { 'Número': 1, 'Fecha de Creación': '2026-03-12', 'Rol': 'Distribuidor Upconnect' },
+    { 'Número': 2, 'Fecha de Creación': '2026-03-25', 'Rol': 'Distribuidor Connect' },
+    { 'Número': 3, 'Fecha de Creación': '2026-04-08', 'Rol': 'Distribuidor Upconnect' },
+    { 'Número': 4, 'Fecha de Creación': '2026-04-22', 'Rol': 'Distribuidor Connect' },
+    { 'Número': 5, 'Fecha de Creación': '2026-05-04', 'Rol': 'Distribuidor Upconnect' },
+    { 'Número': 6, 'Fecha de Creación': '2026-05-19', 'Rol': 'Distribuidor Connect' },
+    { 'Número': 7, 'Fecha de Creación': '2026-06-11', 'Rol': 'Distribuidor Upconnect' },
+    { 'Número': 8, 'Fecha de Creación': '2026-07-03', 'Rol': 'Distribuidor Connect' },
+    { 'Número': 9, 'Fecha de Creación': '2026-08-15', 'Rol': 'Distribuidor Upconnect' },
+    { 'Número': 10, 'Fecha de Creación': '2026-09-02', 'Rol': 'Distribuidor Connect' },
   ];
   const ws = XLSX.utils.json_to_sheet(templateRows);
   XLSX.utils.book_append_sheet(wb, ws, 'Vendedores');

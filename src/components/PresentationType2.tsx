@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { GlobalDataset, SocioRecord, SolutionCategory } from '../types';
+import { GlobalDataset, SocioRecord, SolutionCategory, CommunityMetric } from '../types';
 import { computeReportView, computeSociosChannelSummary } from '../utils/reportFilters';
 import { exportPresentationType2ToPPTX } from '../services/pptxExportService';
 import { SociosChannelTable } from './SociosChannelTable';
 import { ReorderSlidesModal } from './ReorderSlidesModal';
 import { SlideEditorModal } from './SlideEditorModal';
+import { CommunityCardItem } from './CommunityCardItem';
+import { CommunityCardsModal } from './CommunityCardsModal';
 import { 
   ChevronLeft, 
   ChevronRight, 
@@ -25,6 +27,7 @@ import {
   BarChart3, 
   Search,
   Edit3,
+  Plus,
   Check,
   X,
   Sparkles,
@@ -229,10 +232,8 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard,
     }
   }, [dataset.customOverrides]);
 
-  const [isEditingCommunities, setIsEditingCommunities] = useState<boolean>(false);
-  const [tempUpconta, setTempUpconta] = useState<number>(0);
-  const [tempFranquicia, setTempFranquicia] = useState<number>(0);
-  const [tempFormacion, setTempFormacion] = useState<number>(0);
+  const [isEditingCardsModal, setIsEditingCardsModal] = useState<boolean>(false);
+  const [isCreatingCardModal, setIsCreatingCardModal] = useState<boolean>(false);
 
   const upcontaMembers = editValues['r2_upcontaSocios'] !== undefined
     ? Number(editValues['r2_upcontaSocios'])
@@ -246,6 +247,48 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard,
     ? Number(editValues['r2_formacionComercial'])
     : (customCommunities.formacionComercial ?? (autoCoSocios > 0 ? autoFormacion : 51));
 
+  const initialDefaultCards: CommunityMetric[] = [
+    {
+      id: 'upconta',
+      name: 'UpConta Socios',
+      roleBadge: 'Distribuidor Upconnect',
+      members: upcontaMembers,
+      subtitle: 'Socios Registrados',
+      description: 'Red principal de socios estratégicos y contadores vinculados a UpConnect.',
+      color: 'sky',
+    },
+    {
+      id: 'franquicia',
+      name: 'Franquicia Contadores VIP',
+      roleBadge: 'Distribuidor Connect',
+      members: franquiciaMembers,
+      subtitle: 'Socios / Franquiciados Registrados',
+      description: 'Grupo élite de contadores franquiciados y red externa Distribuidor Connect.',
+      color: 'purple',
+    },
+    {
+      id: 'formacion',
+      name: 'Capacitación Franquicia',
+      roleBadge: 'Capacitación',
+      members: formacionMembers,
+      subtitle: 'Miembros en Inducción',
+      description: 'Programa de formación técnica y habilitación comercial de nuevos socios.',
+      color: 'emerald',
+    },
+  ];
+
+  const [communityCards, setCommunityCards] = useState<CommunityMetric[]>(() => {
+    return dataset.communities && dataset.communities.length > 0
+      ? dataset.communities
+      : initialDefaultCards;
+  });
+
+  useEffect(() => {
+    if (dataset.communities && dataset.communities.length > 0) {
+      setCommunityCards(dataset.communities);
+    }
+  }, [dataset.communities]);
+
   const isManuallyModified =
     customCommunities.upcontaSocios !== undefined ||
     customCommunities.franquiciaVIP !== undefined ||
@@ -253,36 +296,72 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard,
     editValues['r2_upcontaSocios'] !== undefined ||
     editValues['r2_franquiciaVIP'] !== undefined ||
     editValues['r2_formacionComercial'] !== undefined ||
-    editValues['upcontaSocios'] !== undefined ||
-    editValues['franquiciaVIP'] !== undefined ||
-    editValues['formacionComercial'] !== undefined;
+    (dataset.communities && dataset.communities.length > 0);
 
-  const handleSaveCommunitiesModal = (up: number, vip: number, form: number) => {
-    const updated = {
-      r2_upcontaSocios: up,
-      r2_franquiciaVIP: vip,
-      r2_formacionComercial: form,
-      upcontaSocios: up,
-      franquiciaVIP: vip,
-      formacionComercial: form,
-    };
-    setCustomCommunities(updated);
-    setEditValues((prev) => ({
-      ...prev,
-      ...updated,
-    }));
+  const handleSaveCommunityCards = (updatedCards: CommunityMetric[]) => {
+    setCommunityCards(updatedCards);
+    const overridesUpdate: Record<string, any> = {};
+    const upCard = updatedCards.find((c) => c.id === 'upconta' || c.name.toLowerCase().includes('upconta'));
+    const vipCard = updatedCards.find((c) => c.id === 'franquicia' || c.name.toLowerCase().includes('franquicia') || c.name.toLowerCase().includes('vip'));
+    const formCard = updatedCards.find((c) => c.id === 'formacion' || c.name.toLowerCase().includes('capacitaci') || c.name.toLowerCase().includes('formaci'));
+    if (upCard) {
+      overridesUpdate['r2_upcontaSocios'] = upCard.members;
+      overridesUpdate['upcontaSocios'] = upCard.members;
+      setCustomCommunities(prev => ({ ...prev, upcontaSocios: upCard.members }));
+    }
+    if (vipCard) {
+      overridesUpdate['r2_franquiciaVIP'] = vipCard.members;
+      overridesUpdate['franquiciaVIP'] = vipCard.members;
+      setCustomCommunities(prev => ({ ...prev, franquiciaVIP: vipCard.members }));
+    }
+    if (formCard) {
+      overridesUpdate['r2_formacionComercial'] = formCard.members;
+      overridesUpdate['formacionComercial'] = formCard.members;
+      setCustomCommunities(prev => ({ ...prev, formacionComercial: formCard.members }));
+    }
+
     if (onUpdateDataset) {
       onUpdateDataset({
+        communities: updatedCards,
         customOverrides: {
           ...(dataset.customOverrides || {}),
-          ...updated,
+          ...overridesUpdate,
         },
       });
     }
-    setIsEditingCommunities(false);
   };
 
   const handleResetCommunities = () => {
+    const resetCards: CommunityMetric[] = [
+      {
+        id: 'upconta',
+        name: 'UpConta Socios',
+        roleBadge: 'Distribuidor Upconnect',
+        members: autoUpSocios,
+        subtitle: 'Socios Registrados',
+        description: 'Red principal de socios estratégicos y contadores vinculados a UpConnect.',
+        color: 'sky',
+      },
+      {
+        id: 'franquicia',
+        name: 'Franquicia Contadores VIP',
+        roleBadge: 'Distribuidor Connect',
+        members: autoCoSocios,
+        subtitle: 'Socios / Franquiciados Registrados',
+        description: 'Grupo élite de contadores franquiciados y red externa Distribuidor Connect.',
+        color: 'purple',
+      },
+      {
+        id: 'formacion',
+        name: 'Capacitación Franquicia',
+        roleBadge: 'Capacitación',
+        members: autoFormacion,
+        subtitle: 'Miembros en Inducción',
+        description: 'Programa de formación técnica y habilitación comercial de nuevos socios.',
+        color: 'emerald',
+      },
+    ];
+    setCommunityCards(resetCards);
     setCustomCommunities({});
     const newOverrides = { ...(dataset.customOverrides || {}) };
     delete newOverrides.r2_upcontaSocios;
@@ -293,7 +372,7 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard,
     delete newOverrides.formacionComercial;
     setEditValues(newOverrides);
     if (onUpdateDataset) {
-      onUpdateDataset({ customOverrides: newOverrides });
+      onUpdateDataset({ communities: resetCards, customOverrides: newOverrides });
     }
   };
 
@@ -1537,147 +1616,61 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard,
                       title="Restablecer a valores automáticos del Excel"
                     >
                       <RotateCcw className="w-3.5 h-3.5" />
-                      <span>Restablecer Automático</span>
+                      <span>Restablecer</span>
                     </button>
                   )}
                   <button
-                    onClick={() => {
-                      setTempUpconta(upcontaMembers);
-                      setTempFranquicia(franquiciaMembers);
-                      setTempFormacion(formacionMembers);
-                      setIsEditingCommunities(true);
-                    }}
+                    onClick={() => setIsCreatingCardModal(true)}
                     className="text-xs px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold flex items-center gap-1.5 shadow-md shadow-emerald-600/30 transition-colors"
+                    title="Crear un nuevo recuadro"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Crear</span>
+                  </button>
+                  <button
+                    onClick={() => setIsEditingCardsModal(true)}
+                    className="text-xs px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-semibold flex items-center gap-1.5 shadow-md shadow-sky-600/30 transition-colors"
+                    title="Modificar nombres y cantidades de los recuadros"
                   >
                     <Edit3 className="w-3.5 h-3.5" />
-                    <span>Modificar Miembros</span>
+                    <span>Modificar</span>
                   </button>
                 </div>
               </div>
 
-              {/* 3 Compact Funnel Columns */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 my-2">
-                {/* Stage 1 */}
-                <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-800 shadow-xl flex flex-col justify-between text-center">
-                  <div>
-                    <div className="w-10 h-10 rounded-xl bg-blue-600/20 text-sky-400 font-bold flex items-center justify-center mx-auto mb-2">
-                      Up
-                    </div>
-                    <h3 className="text-sm font-bold text-white">UpConta Socios</h3>
-                    {isEditMode ? (
-                      <div className="my-1">
-                        <label className="text-[10px] text-sky-300 font-medium block">Cantidad Socios:</label>
-                        <input
-                          type="number"
-                          min="0"
-                          value={upcontaMembers}
-                          onChange={(e) => {
-                            const val = parseInt(e.target.value, 10) || 0;
-                            setCustomCommunities((prev) => ({ ...prev, upcontaSocios: val }));
-                            setEditValues((prev) => ({ ...prev, r2_upcontaSocios: val, upcontaSocios: val }));
-                          }}
-                          className="w-full text-2xl font-black text-sky-400 bg-slate-950 border border-sky-500 rounded px-2 py-0.5 tabular-nums focus:outline-none text-center"
-                        />
-                      </div>
-                    ) : (
-                      <div className="text-3xl font-black text-sky-400 tabular-nums my-1">
-                        {upcontaMembers}
-                      </div>
-                    )}
-                    <div className="text-[11px] font-semibold text-slate-400 mb-1">Socios Distribuidor Upconnect</div>
-                  </div>
-                  <p className="text-[11px] text-slate-400 border-t border-slate-800 pt-2">
-                    Red principal de contadores y socios directos UpConnect.
-                  </p>
-                </div>
-
-                {/* Stage 2 (Hero highlighted) */}
-                <div className="p-4 rounded-xl bg-slate-900/95 border-2 border-emerald-500 shadow-xl shadow-emerald-950/50 flex flex-col justify-between text-center relative">
-                  <div>
-                    <div className="w-10 h-10 rounded-xl bg-purple-600/20 text-purple-400 font-bold flex items-center justify-center mx-auto mb-2">
-                      👑
-                    </div>
-                    <h3 className="text-sm font-bold text-white">Franquicia Contadores VIP</h3>
-                    {isEditMode ? (
-                      <div className="my-1">
-                        <label className="text-[10px] text-purple-300 font-medium block">Cantidad Franquiciados:</label>
-                        <input
-                          type="number"
-                          min="0"
-                          value={franquiciaMembers}
-                          onChange={(e) => {
-                            const val = parseInt(e.target.value, 10) || 0;
-                            setCustomCommunities((prev) => ({ ...prev, franquiciaVIP: val }));
-                            setEditValues((prev) => ({ ...prev, r2_franquiciaVIP: val, franquiciaVIP: val }));
-                          }}
-                          className="w-full text-2xl font-black text-white bg-slate-950 border border-emerald-500 rounded px-2 py-0.5 tabular-nums focus:outline-none text-center"
-                        />
-                      </div>
-                    ) : (
-                      <div className="text-3xl font-black text-white tabular-nums my-1">
-                        {franquiciaMembers}
-                      </div>
-                    )}
-                    <div className="text-[11px] font-semibold text-purple-400 mb-1">Socios Distribuidor Connect</div>
-                  </div>
-                  <p className="text-[11px] text-slate-300 border-t border-slate-800 pt-2">
-                    Contadores activos y red externa de distribución Connect.
-                  </p>
-                </div>
-
-                {/* Stage 3 */}
-                <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-800 shadow-xl flex flex-col justify-between text-center">
-                  <div>
-                    <div className="w-10 h-10 rounded-xl bg-emerald-600/20 text-emerald-400 font-bold flex items-center justify-center mx-auto mb-2">
-                      🎓
-                    </div>
-                    <h3 className="text-sm font-bold text-white">Capacitación Franquicia</h3>
-                    {isEditMode ? (
-                      <div className="my-1">
-                        <label className="text-[10px] text-emerald-300 font-medium block">Miembros en Formación:</label>
-                        <input
-                          type="number"
-                          min="0"
-                          value={formacionMembers}
-                          onChange={(e) => {
-                            const val = parseInt(e.target.value, 10) || 0;
-                            setCustomCommunities((prev) => ({ ...prev, formacionComercial: val }));
-                            setEditValues((prev) => ({ ...prev, r2_formacionComercial: val, formacionComercial: val }));
-                          }}
-                          className="w-full text-2xl font-black text-emerald-400 bg-slate-950 border border-emerald-500 rounded px-2 py-0.5 tabular-nums focus:outline-none text-center"
-                        />
-                      </div>
-                    ) : (
-                      <div className="text-3xl font-black text-emerald-400 tabular-nums my-1">
-                        {formacionMembers}
-                      </div>
-                    )}
-                    <div className="text-[11px] font-semibold text-slate-400 mb-1">Miembros en Inducción</div>
-                  </div>
-                  <p className="text-[11px] text-slate-400 border-t border-slate-800 pt-2">
-                    Programa de formación técnica y habilitación comercial.
-                  </p>
-                </div>
-              </div>
-
-              {/* TABLA ADICIONAL: Cantidad de Socios Distribuidor Upconnect vs Distribuidor Connect */}
-              <div className="my-1">
-                <SociosChannelTable
-                  summary={communitiesTableSummary}
-                  variant="slide"
-                  title="Distribución y Cantidad de Socios por Canal: Distribuidor Upconnect vs Distribuidor Connect"
-                />
+              {/* Recuadros Dinámicos estilo tarjeta oficial */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 my-auto py-3">
+                {communityCards.map((card, idx) => (
+                  <CommunityCardItem
+                    key={card.id || idx}
+                    card={card}
+                    isEditMode={isEditMode}
+                    onMemberChange={(val) => {
+                      const copy = [...communityCards];
+                      copy[idx] = { ...copy[idx], members: val };
+                      handleSaveCommunityCards(copy);
+                    }}
+                    onDelete={
+                      communityCards.length > 1
+                        ? () => {
+                            const filtered = communityCards.filter((_, i) => i !== idx);
+                            handleSaveCommunityCards(filtered);
+                          }
+                        : undefined
+                    }
+                  />
+                ))}
               </div>
 
               {/* Bottom callout */}
-              <div className="p-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-xs text-slate-300 flex items-center justify-between">
+              <div className="p-3 rounded-xl bg-slate-900/90 border border-slate-800 text-xs text-slate-300 flex items-center justify-between">
                 <div>
-                  <strong className="text-emerald-400">Total Cartera Auditada:</strong> {communitiesTableSummary.totalSociosCount} socios registrados ({communitiesTableSummary.upconnect.count} Distribuidor Upconnect / {communitiesTableSummary.connectors.count} Distribuidor Connect) con {communitiesTableSummary.totalOperationsCount} ventas conciliadas por ${communitiesTableSummary.totalSales.toLocaleString('en-US', { minimumFractionDigits: 2 })} USD.
+                  <strong className="text-emerald-400">Total Ecosistema de Socios:</strong> {communityCards.reduce((acc, c) => acc + c.members, 0)} miembros registrados en {communityCards.length} recuadros activos.
                   {isManuallyModified && (
-                    <span className="ml-2 text-amber-400 font-medium text-[11px]">(Valores personalizados manualmente)</span>
+                    <span className="ml-2 text-amber-400 font-medium text-[11px]">(Valores personalizados)</span>
                   )}
                 </div>
-                <span className="text-emerald-400 font-bold">100% Conciliado con Base Excel</span>
+                <span className="text-emerald-400 font-bold">100% Conciliado</span>
               </div>
             </div>
           )}
@@ -1733,105 +1726,21 @@ export const PresentationType2: React.FC<Props> = ({ dataset, onBackToDashboard,
         </div>
       </div>
 
-      {/* MODAL: Modificar Miembros de Comunidades / Embudo */}
-      {isEditingCommunities && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="w-full max-w-md bg-slate-950 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-5">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-              <div className="flex items-center gap-2">
-                <Users className="w-5 h-5 text-emerald-400" />
-                <h3 className="text-base font-bold text-white">Modificar Conteo de Miembros</h3>
-              </div>
-              <button
-                onClick={() => setIsEditingCommunities(false)}
-                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <p className="text-xs text-slate-400">
-              Ajusta manualmente los miembros del embudo. Los cambios afectarán de inmediato la cantidad y porcentajes de la tabla de distribución por canal.
-            </p>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">
-                  UpConta Socios (Distribuidor Upconnect)
-                </label>
-                <div className="text-[11px] text-slate-500 mb-1.5">
-                  Socios calculados en Excel: <strong className="text-sky-400">{autoUpSocios}</strong>
-                </div>
-                <input
-                  type="number"
-                  min="0"
-                  value={tempUpconta}
-                  onChange={(e) => setTempUpconta(parseInt(e.target.value, 10) || 0)}
-                  className="w-full px-3 py-2 text-sm bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-emerald-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">
-                  Franquicia Contadores VIP (Distribuidor Connect)
-                </label>
-                <div className="text-[11px] text-slate-500 mb-1.5">
-                  Socios calculados en Excel: <strong className="text-purple-400">{autoCoSocios}</strong>
-                </div>
-                <input
-                  type="number"
-                  min="0"
-                  value={tempFranquicia}
-                  onChange={(e) => setTempFranquicia(parseInt(e.target.value, 10) || 0)}
-                  className="w-full px-3 py-2 text-sm bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-emerald-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">
-                  Capacitación Franquicia (Formación Comercial)
-                </label>
-                <div className="text-[11px] text-slate-500 mb-1.5">
-                  Estimado automático: <strong className="text-emerald-400">{autoFormacion}</strong>
-                </div>
-                <input
-                  type="number"
-                  min="0"
-                  value={tempFormacion}
-                  onChange={(e) => setTempFormacion(parseInt(e.target.value, 10) || 0)}
-                  className="w-full px-3 py-2 text-sm bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-emerald-500"
-                />
-              </div>
-            </div>
-
-            <div className="flex items-center justify-between pt-3 border-t border-slate-800 gap-2">
-              <button
-                onClick={handleResetCommunities}
-                className="text-xs px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors flex items-center gap-1.5 font-medium"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                <span>Restablecer</span>
-              </button>
-
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setIsEditingCommunities(false)}
-                  className="text-xs px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
-                >
-                  Cancelar
-                </button>
-                <button
-                  onClick={() => handleSaveCommunitiesModal(tempUpconta, tempFranquicia, tempFormacion)}
-                  className="text-xs px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold transition-colors shadow-lg shadow-emerald-600/30 flex items-center gap-1.5"
-                >
-                  <Check className="w-3.5 h-3.5" />
-                  <span>Guardar Cambios</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* MODALES: Modificar y Crear Recuadros de Comunidades */}
+      <CommunityCardsModal
+        isOpen={isEditingCardsModal}
+        onClose={() => setIsEditingCardsModal(false)}
+        cards={communityCards}
+        mode="edit"
+        onSave={handleSaveCommunityCards}
+      />
+      <CommunityCardsModal
+        isOpen={isCreatingCardModal}
+        onClose={() => setIsCreatingCardModal(false)}
+        cards={communityCards}
+        mode="create"
+        onSave={handleSaveCommunityCards}
+      />
 
       {/* MODAL: Mover y Reorganizar Diapositivas */}
       <ReorderSlidesModal

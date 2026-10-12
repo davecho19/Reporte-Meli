@@ -180,14 +180,14 @@ export const ExcelUploadModal: React.FC<Props> = ({
             <div>
               <h2 className="text-base font-bold text-white">
                 {activeType === 'vendedores'
-                  ? 'Cargar Vendedores (Estadística de Socios Creados)'
+                  ? 'Cargar Vendedores (Estadística por Rol de Socios Creados)'
                   : activeType === 'firma'
                   ? 'Carga Archivo Firma (Afecta únicamente al Reporte 1)'
                   : 'Carga Archivo Socios (Afecta únicamente al Reporte 2)'}
               </h2>
               <p className="text-xs text-slate-400">
                 {activeType === 'vendedores'
-                  ? 'Archivo de 2 columnas: Número y Fecha de Creación para graficar socios creados mes a mes'
+                  ? 'Archivo con columnas Número, Fecha de Creación y Rol para graficar por Distribuidor Upconnect y Distribuidor Connect'
                   : activeType === 'firma'
                   ? 'Alimenta las emisiones y cálculos de canales del Reporte 1 (no afecta la cartera del Reporte 2)'
                   : 'Alimenta la nómina de socios, auditoría y Pareto del Reporte 2 (no altera las ventas del Reporte 1)'}
@@ -286,14 +286,14 @@ export const ExcelUploadModal: React.FC<Props> = ({
                 {isProcessing
                   ? 'Procesando archivo...'
                   : activeType === 'vendedores'
-                  ? 'Arrastra tu archivo Excel de Vendedores (2 columnas) aquí'
+                  ? 'Arrastra tu archivo Excel de Vendedores (Número, Fecha y Rol) aquí'
                   : activeType === 'firma'
                   ? 'Arrastra tu archivo Excel de Firmas / Emisiones aquí'
                   : 'Arrastra tu archivo Excel de Socios (7 Columnas) aquí'}
               </h3>
               <p className="text-xs text-slate-400 max-w-md mx-auto mb-4">
                 {activeType === 'vendedores'
-                  ? 'Solo contempla 2 columnas: Número y Fecha de Creación. Alimenta exclusivamente el gráfico estadístico de socios creados mes a mes.'
+                  ? 'Contempla 3 columnas: Número, Fecha de Creación y Rol. Alimenta exclusivamente el gráfico estadístico de socios creados mes a mes por Distribuidor Upconnect y Distribuidor Connect.'
                   : activeType === 'firma'
                   ? 'Procesa el reporte de emisiones extrayendo el valor de cada firma de la Columna BH (USD) y el canal (Distribuidor Connect / Upconnect) de la Columna CB.'
                   : 'Formato oficial de 7 columnas: SOCIO, FECHA, MES, ID CLIENTE, NOMBRE CLIENTE, TIPO DE PLAN, PRECIO. Los datos se sumarán directamente al Reporte 2.'}
@@ -310,7 +310,7 @@ export const ExcelUploadModal: React.FC<Props> = ({
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-purple-300 border border-slate-700 shadow-sm"
                   >
                     <Download className="w-3.5 h-3.5" />
-                    <span>Descargar Plantilla Vendedores (2 Columnas .xlsx)</span>
+                    <span>Descargar Plantilla Vendedores (.xlsx)</span>
                   </button>
                 ) : activeType === 'firma' ? (
                   <button
@@ -501,9 +501,12 @@ export const ExcelUploadModal: React.FC<Props> = ({
                   {parsedResult.vendorMonthlyCreations && parsedResult.vendorMonthlyCreations.length > 0 && (
                     <div className="flex flex-wrap gap-2 mb-3">
                       {parsedResult.vendorMonthlyCreations.map((m, idx) => (
-                        <div key={idx} className="px-3 py-1.5 rounded-lg bg-purple-950/60 border border-purple-500/30 text-xs flex items-center gap-2">
+                        <div key={idx} className="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs flex items-center gap-2">
                           <span className="font-semibold text-slate-300 capitalize">{m.month.toLowerCase()} {m.year ? `'${String(m.year).slice(-2)}` : ''}:</span>
-                          <strong className="text-purple-300 font-black">{m.count} socios</strong>
+                          <span className="text-sky-400 font-bold">{m.upconnectCount ?? 0} Upconnect</span>
+                          <span className="text-slate-600">|</span>
+                          <span className="text-amber-400 font-bold">{m.connectCount ?? 0} Connect</span>
+                          <span className="text-slate-500 font-medium">({m.count} total)</span>
                         </div>
                       ))}
                     </div>
@@ -515,6 +518,7 @@ export const ExcelUploadModal: React.FC<Props> = ({
                         <tr>
                           <th className="py-2 px-3">Número</th>
                           <th className="py-2 px-3">Fecha de Creación</th>
+                          <th className="py-2 px-3">Rol</th>
                           <th className="py-2 px-3">Mes Asignado</th>
                         </tr>
                       </thead>
@@ -523,6 +527,15 @@ export const ExcelUploadModal: React.FC<Props> = ({
                           <tr key={idx} className="hover:bg-slate-850">
                             <td className="py-1.5 px-3 font-semibold text-white">{v.numero}</td>
                             <td className="py-1.5 px-3 text-purple-300">{v.fechaCreacion}</td>
+                            <td className="py-1.5 px-3">
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                v.rol === 'Distribuidor Connect'
+                                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                                  : 'bg-sky-500/20 text-sky-300 border border-sky-500/30'
+                              }`}>
+                                {v.rol || 'Distribuidor Upconnect'}
+                              </span>
+                            </td>
                             <td className="py-1.5 px-3 text-slate-300 capitalize">{v.monthName.toLowerCase()}</td>
                           </tr>
                         ))}

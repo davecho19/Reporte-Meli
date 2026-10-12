@@ -688,37 +688,63 @@ export const DashboardView: React.FC<Props> = ({
         const monthlyCreations = dataset.vendorMonthlyCreations || [];
         const hasData = monthlyCreations.length > 0;
         const totalCreaciones = monthlyCreations.reduce((acc, m) => acc + m.count, 0);
-        const maxCount = hasData ? Math.max(...monthlyCreations.map((m) => m.count), 1) : 1;
+        const totalUpconnect = monthlyCreations.reduce((acc, m) => acc + (m.upconnectCount ?? (m.count || 0)), 0);
+        const totalConnect = monthlyCreations.reduce((acc, m) => acc + (m.connectCount ?? 0), 0);
+        const maxVal = hasData
+          ? Math.max(...monthlyCreations.flatMap((m) => [m.upconnectCount ?? 0, m.connectCount ?? 0]), 1)
+          : 1;
 
         return (
           <div className="p-6 sm:p-7 rounded-2xl bg-[#0c1322] border border-slate-800 shadow-xl space-y-6">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-800/80">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-800/80">
               <div>
                 <span className="text-xs uppercase font-bold tracking-wider text-purple-400">
                   ESTADÍSTICA DE VENDEDORES
                 </span>
                 <h3 className="text-xl sm:text-2xl font-bold text-white tracking-tight mt-1">
-                  Socios Creados Mes a Mes
+                  Socios Creados Mes a Mes por Rol
                 </h3>
                 <p className="text-xs text-slate-400 mt-1">
-                  Cantidad de socios creados en cada mes según el archivo de vendedores.
+                  Cantidad creada por Distribuidor Upconnect y Distribuidor Connect según archivo de vendedores.
                 </p>
               </div>
 
               {hasData && (
-                <div className="flex items-center gap-3">
-                  <div className="px-4 py-2 rounded-xl bg-purple-950/40 border border-purple-500/30 text-right">
-                    <div className="text-2xl font-black text-purple-400 tabular-nums">
+                <div className="flex flex-wrap items-center gap-3">
+                  {/* Distribuidor Upconnect Total */}
+                  <div className="px-3.5 py-2 rounded-xl bg-sky-950/40 border border-sky-500/30 text-right">
+                    <div className="text-xl font-black text-sky-400 tabular-nums">
+                      {totalUpconnect}
+                    </div>
+                    <div className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">
+                      Distribuidor Upconnect
+                    </div>
+                  </div>
+
+                  {/* Distribuidor Connect Total */}
+                  <div className="px-3.5 py-2 rounded-xl bg-amber-950/40 border border-amber-500/30 text-right">
+                    <div className="text-xl font-black text-amber-400 tabular-nums">
+                      {totalConnect}
+                    </div>
+                    <div className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">
+                      Distribuidor Connect
+                    </div>
+                  </div>
+
+                  {/* Total General */}
+                  <div className="px-3.5 py-2 rounded-xl bg-purple-950/40 border border-purple-500/30 text-right">
+                    <div className="text-xl font-black text-purple-400 tabular-nums">
                       {totalCreaciones}
                     </div>
-                    <div className="text-[11px] text-slate-400 font-medium">
+                    <div className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">
                       Total Creados
                     </div>
                   </div>
+
                   {onOpenUploadVendedores && (
                     <button
                       onClick={onOpenUploadVendedores}
-                      className="px-3.5 py-2 text-xs font-semibold rounded-xl bg-slate-800 hover:bg-slate-700 text-purple-300 border border-purple-500/30 transition-all flex items-center gap-1.5"
+                      className="px-3.5 py-2 text-xs font-semibold rounded-xl bg-slate-800 hover:bg-slate-700 text-purple-300 border border-purple-500/30 transition-all flex items-center gap-1.5 self-stretch"
                       title="Cargar o actualizar archivo de vendedores"
                     >
                       <UserPlus className="w-3.5 h-3.5" />
@@ -731,30 +757,69 @@ export const DashboardView: React.FC<Props> = ({
 
             {hasData ? (
               <div className="space-y-4">
-                {/* Gráfico de Barras Estadístico */}
-                <div className="h-64 pt-8 pb-4 flex items-end gap-3 sm:gap-6 overflow-x-auto border-b border-slate-800/80 px-2">
+                {/* Leyenda limpia de colores por rol */}
+                <div className="flex items-center gap-5 text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className="w-3 h-3 rounded bg-gradient-to-tr from-sky-600 to-sky-400 inline-block shadow-sm shadow-sky-500/30" />
+                    <span className="font-semibold text-slate-200">Distribuidor Upconnect</span>
+                    <span className="text-sky-400 font-bold tabular-nums">({totalUpconnect})</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="w-3 h-3 rounded bg-gradient-to-tr from-amber-600 to-amber-400 inline-block shadow-sm shadow-amber-500/30" />
+                    <span className="font-semibold text-slate-200">Distribuidor Connect</span>
+                    <span className="text-amber-400 font-bold tabular-nums">({totalConnect})</span>
+                  </div>
+                </div>
+
+                {/* Gráfico de Barras Agrupadas por Rol Mes a Mes */}
+                <div className="h-72 pt-8 pb-4 flex items-end gap-3 sm:gap-6 overflow-x-auto border-b border-slate-800/80 px-2">
                   {monthlyCreations.map((item, idx) => {
-                    const heightPercent = Math.max(10, Math.round((item.count / maxCount) * 100));
+                    const upCount = item.upconnectCount ?? (item.count || 0);
+                    const conCount = item.connectCount ?? 0;
+                    const upHeightPercent = upCount > 0 ? Math.max(10, Math.round((upCount / maxVal) * 100)) : 3;
+                    const conHeightPercent = conCount > 0 ? Math.max(10, Math.round((conCount / maxVal) * 100)) : 3;
+
                     return (
                       <div
                         key={idx}
-                        className="flex-1 min-w-[56px] max-w-[90px] h-full flex flex-col items-center justify-end group"
+                        className="flex-1 min-w-[90px] max-w-[130px] h-full flex flex-col items-center justify-end group"
                       >
-                        {/* Cantidad exacta de socios creados */}
-                        <span className="text-xs sm:text-sm font-black text-purple-300 tabular-nums mb-1.5 transition-transform group-hover:scale-110">
-                          {item.count}
-                        </span>
+                        {/* Barras paralelas (Distribuidor Upconnect vs Distribuidor Connect) */}
+                        <div className="w-full bg-slate-900/60 rounded-t-xl p-1.5 h-full flex items-end justify-center gap-2 border-b border-slate-700/40">
+                          {/* Columna Upconnect */}
+                          <div className="flex-1 h-full flex flex-col items-center justify-end">
+                            <span className="text-[11px] sm:text-xs font-black text-sky-400 tabular-nums mb-1 transition-transform group-hover:scale-110">
+                              {upCount}
+                            </span>
+                            <div
+                              style={{ height: `${upHeightPercent}%` }}
+                              className={`w-full rounded-t-md transition-all duration-300 shadow-sm ${
+                                upCount > 0
+                                  ? 'bg-gradient-to-t from-sky-700 via-sky-500 to-sky-400 hover:to-sky-300 shadow-sky-950/50'
+                                  : 'bg-slate-800/40'
+                              }`}
+                              title={`Distribuidor Upconnect (${item.month}): ${upCount}`}
+                            />
+                          </div>
 
-                        {/* Barra */}
-                        <div className="w-full bg-slate-900/80 rounded-t-lg p-0.5 h-full flex items-end">
-                          <div
-                            style={{ height: `${heightPercent}%` }}
-                            className="w-full rounded-t-md bg-gradient-to-t from-purple-700 via-purple-600 to-indigo-500 hover:to-purple-400 shadow-md shadow-purple-950/50 transition-all duration-300"
-                            title={`${item.month}: ${item.count} socios creados`}
-                          />
+                          {/* Columna Connect */}
+                          <div className="flex-1 h-full flex flex-col items-center justify-end">
+                            <span className="text-[11px] sm:text-xs font-black text-amber-400 tabular-nums mb-1 transition-transform group-hover:scale-110">
+                              {conCount}
+                            </span>
+                            <div
+                              style={{ height: `${conHeightPercent}%` }}
+                              className={`w-full rounded-t-md transition-all duration-300 shadow-sm ${
+                                conCount > 0
+                                  ? 'bg-gradient-to-t from-amber-700 via-amber-500 to-amber-400 hover:to-amber-300 shadow-amber-950/50'
+                                  : 'bg-slate-800/40'
+                              }`}
+                              title={`Distribuidor Connect (${item.month}): ${conCount}`}
+                            />
+                          </div>
                         </div>
 
-                        {/* Mes */}
+                        {/* Etiqueta de Mes y Año */}
                         <div className="mt-2 text-center">
                           <span className="text-[11px] font-bold text-slate-300 uppercase tracking-tight block">
                             {item.month.substring(0, 3)}
@@ -764,6 +829,9 @@ export const DashboardView: React.FC<Props> = ({
                               {item.year}
                             </span>
                           )}
+                          <span className="text-[9px] text-slate-400 font-semibold block mt-0.5">
+                            {item.count} tot.
+                          </span>
                         </div>
                       </div>
                     );
@@ -771,7 +839,7 @@ export const DashboardView: React.FC<Props> = ({
                 </div>
 
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between text-xs text-slate-400 gap-2 pt-1">
-                  <span>Indicador basado exclusivamente en el archivo de vendedores (Número y Fecha de Creación).</span>
+                  <span>Indicador basado exclusivamente en el archivo de vendedores (Número, Fecha de Creación y Rol).</span>
                   <span className="font-medium text-slate-300">
                     {dataset.vendorCreations?.length || totalCreaciones} registros procesados
                   </span>
@@ -785,7 +853,7 @@ export const DashboardView: React.FC<Props> = ({
                 <div>
                   <h4 className="text-sm font-bold text-white">Sin datos de vendedores cargados</h4>
                   <p className="text-xs text-slate-400 max-w-md mx-auto mt-1">
-                    Cargue el archivo de Excel con 2 columnas (Número y Fecha de Creación) para visualizar la cantidad de socios creados mes a mes.
+                    Cargue el archivo de Excel con columnas Número, Fecha de Creación y Rol para visualizar la cantidad por Distribuidor Upconnect y Distribuidor Connect mes a mes.
                   </p>
                 </div>
                 {onOpenUploadVendedores && (

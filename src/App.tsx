@@ -264,17 +264,29 @@ export default function App() {
 
       if (result.mode === 'append' && dataset.vendorCreations && dataset.vendorCreations.length > 0) {
         const mergedCreations = [...dataset.vendorCreations, ...incomingCreations];
-        const monthMap: Record<string, { month: string; monthIndex: number; year: number; count: number }> = {};
+        const monthMap: Record<string, { month: string; monthIndex: number; year: number; count: number; upconnectCount: number; connectCount: number }> = {};
         mergedCreations.forEach((c) => {
           const key = `${c.year || 2026}-${String(c.monthIndex).padStart(2, '0')}`;
           if (!monthMap[key]) {
-            monthMap[key] = { month: c.monthName, monthIndex: c.monthIndex, year: c.year || 2026, count: 0 };
+            monthMap[key] = { month: c.monthName, monthIndex: c.monthIndex, year: c.year || 2026, count: 0, upconnectCount: 0, connectCount: 0 };
           }
           monthMap[key].count += 1;
+          if (c.rol === 'Distribuidor Connect') {
+            monthMap[key].connectCount += 1;
+          } else {
+            monthMap[key].upconnectCount += 1;
+          }
         });
         const mergedMonthly = Object.values(monthMap)
           .sort((a, b) => (a.year !== b.year ? a.year - b.year : a.monthIndex - b.monthIndex))
-          .map((m) => ({ month: m.month, year: m.year, monthIndex: m.monthIndex, count: m.count }));
+          .map((m) => ({
+            month: m.month,
+            year: m.year,
+            monthIndex: m.monthIndex,
+            count: m.count,
+            upconnectCount: m.upconnectCount,
+            connectCount: m.connectCount,
+          }));
 
         updatedDataset.vendorCreations = mergedCreations;
         updatedDataset.vendorMonthlyCreations = mergedMonthly;
